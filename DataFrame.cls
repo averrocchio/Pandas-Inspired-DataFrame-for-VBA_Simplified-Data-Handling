@@ -227,222 +227,436 @@ Public Function LoadFromListObject(ByVal lo As ListObject) As DataFrame
     Set LoadFromListObject = Me
 End Function
 
+
+
 '@Description "Carica da Range (hasHeader/headerAt) con bounds: literal | currentRegion | trimOuterEmpty | smart"
 Public Function LoadFromRange(ByVal rng As Range, _
+
                               Optional ByVal hasHeader As Boolean = True, _
+
                               Optional ByVal headerAt As String = "row", _
-                              Optional ByVal bounds As String = "literal", _
+
+                              Optional ByRef bounds As DFBounds = dfLiteral, _
+
                               Optional ByVal maxExtendRows As Long = 100000) As DataFrame
-    Dim t0 As Double: t0 = Timer
-    
+
+   
+
+Dim t0 As Double: t0 = Timer
+
+ 
+
     If rng Is Nothing Then _
+
         RaiseDf "DataFrame.LoadFromRange", edfInvalidData, "Range non valido (Nothing)."
+
     If rng.Areas.Count > 1 Then _
+
         RaiseDf "DataFrame.LoadFromRange", edfInvalidData, "Range non contiguo (Areas.Count>1)."
 
+
     Dim ws As Worksheet: Set ws = rng.Worksheet
+
     Dim baseRng As Range, workRng As Range, finalRng As Range
+
     Dim arr As Variant
+
     Dim r As Long, c As Long               ' dimensioni array (uso generico)
+
     Dim i As Long, j As Long               ' indici loop (unica dichiarazione)
+
     Dim orient As String
+
     Dim cutTop As Long, cutBottom As Long, cutLeft As Long, cutRight As Long
+
     Dim extendedRows As Long: extendedRows = 0
 
+
     ' -------- 1) Determina range di base secondo bounds --------
-    Select Case LCase$(bounds)
-        Case "currentregion", "smart"
+
+    Select Case bounds 'LCase$(bounds)
+
+        Case dfCurrentRegion, dfSmart
+
             Set baseRng = rng.Cells(1, 1).CurrentRegion
-        Case "literal", "trimouterempty"
+
+        Case dfLiteral, dfTrimOuterEmpty
+
             Set baseRng = rng
+
         Case Else
+
             RaiseDf "DataFrame.LoadFromRange", edfInvalidData, "bounds non riconosciuto: '" & bounds & "'."
+
     End Select
 
+
     ' -------- 2) (eventuale) trim dei bordi esterni vuoti in RAM --------
-    If LCase$(bounds) = "trimouterempty" Or LCase$(bounds) = "smart" Then
+
+    'If LCase$(bounds) = "trimouterempty" Or LCase$(bounds) = "smart" Then
+
+    If bounds = dfTrimOuterEmpty Or bounds = dfSmart Then
+
         arr = baseRng.Value2         ' lettura in blocco
+
         r = UBound(arr, 1) - LBound(arr, 1) + 1
+
         c = UBound(arr, 2) - LBound(arr, 2) + 1
+
         Call DetectOuterEmptyCuts(arr, cutTop, cutBottom, cutLeft, cutRight)
+
         ' Se tutto vuoto, non tagliare oltre il minimo (lascia baseRng)
+
         If cutTop = 0 And cutBottom = 0 And cutLeft = 0 And cutRight = 0 Then
+
             Set workRng = baseRng
+
         Else
+
             Set workRng = baseRng.Offset(cutTop, cutLeft).Resize( _
+
                           baseRng.rows.Count - cutTop - cutBottom, _
+
                           baseRng.Columns.Count - cutLeft - cutRight)
+
         End If
+
     Else
+
         Set workRng = baseRng
+
     End If
+
 
     ' -------- 3) smart: estensione "header-down" solo verticale --------
+
     ' Vale solo se hasHeader=True e orientamento effettivo = "row"
+
     orient = ResolveHeaderAt(headerAt, workRng.rows.Count, workRng.Columns.Count)
-    If LCase$(bounds) = "smart" And hasHeader And LCase$(orient) = "row" Then
+
+    'If LCase$(bounds) = "smart" And hasHeader And LCase$(orient) = "row" Then
+
+    If bounds = dfSmart And hasHeader And LCase$(orient) = "row" Then
+
         Dim headerRow As Long: headerRow = workRng.Row
+
         Dim leftCol As Long:    leftCol = workRng.Column
+
         Dim rightCol As Long:   rightCol = workRng.Column + workRng.Columns.Count - 1
 
+
         ' cap inferiore: UsedRange o max estensione
+
         Dim usedBottom As Long
+
         usedBottom = ws.UsedRange.Row + ws.UsedRange.rows.Count - 1
+
         Dim bottomCap As Long
+
         bottomCap = headerRow + maxExtendRows
+
         If usedBottom < bottomCap Then bottomCap = usedBottom
+
         If bottomCap < headerRow Then bottomCap = headerRow
 
+
         ' Leggi blocco colonne fisse da headerRow..bottomCap e cerca last non-vuota (dal basso)
+
         Dim bigRng As Range
+
         Set bigRng = ws.Range(ws.Cells(headerRow, leftCol), ws.Cells(bottomCap, rightCol))
+
         Dim bigArr As Variant: bigArr = bigRng.Value2
 
+
         Dim lastDataRowRel As Long: lastDataRowRel = FindLastNonEmptyRow(bigArr, True) ' True = salta header
+
         Dim currentBottom As Long: currentBottom = workRng.Row + workRng.rows.Count - 1
+
         Dim newBottom As Long
-        
+
+     
+
         If lastDataRowRel = 0 Then
+
             ' nessun dato sotto l'header: lascia invariato
+
             Set finalRng = workRng
+
         Else
+
             newBottom = headerRow + lastDataRowRel - 1
+
             If newBottom > currentBottom Then
+
                 Set finalRng = ws.Range(ws.Cells(workRng.Row, workRng.Column), ws.Cells(newBottom, rightCol))
+
                 extendedRows = newBottom - currentBottom
+
             Else
+
                 Set finalRng = workRng
+
             End If
+
         End If
+
     Else
+
         Set finalRng = workRng
+
     End If
 
+
     ' -------- 4) Costruzione header + dati in RAM --------
+
     Dim dataArr As Variant, hdr As Variant
+
     Dim rowsData As Long, colsData As Long
 
+
     Dim finalArr As Variant: finalArr = finalRng.Value2
+
     Dim rLo As Long, rHi As Long, cLo As Long, cHi As Long
+
     rLo = LBound(finalArr, 1): rHi = UBound(finalArr, 1)
+
     cLo = LBound(finalArr, 2): cHi = UBound(finalArr, 2)
+
 
     orient = ResolveHeaderAt(headerAt, (rHi - rLo + 1), (cHi - cLo + 1))
 
+
     If LCase$(orient) = "row" Then
+
         colsData = cHi - cLo + 1
+
         If hasHeader Then
+
             hdr = HeaderFromRow(finalArr, rLo, cLo, cHi)
+
             hdr = Hdr_EnsureUnique1D(hdr)
+
             ' dati = righe successive
+
             rowsData = (rHi - rLo)
+
             If rowsData <= 0 Then
+
                 ReDim dataArr(1 To 0, 1 To colsData)
+
             Else
+
                 ReDim dataArr(1 To rowsData, 1 To colsData)
+
                 For i = 1 To rowsData
+
                     For j = 1 To colsData
+
                         dataArr(i, j) = finalArr(rLo + i, cLo + j - 1)
+
                     Next j
+
                 Next i
+
             End If
+
         Else
+
             ' header generico C1..Cn, dati = tutto il blocco
+
             hdr = GenHeaderCols(colsData)
+
             rowsData = (rHi - rLo + 1)
+
             ReDim dataArr(1 To rowsData, 1 To colsData)
+
             Dim a As Long, b As Long, rr As Long, cc As Long
+
             rr = 0
+
             For a = rLo To rHi
+
                 rr = rr + 1
+
                 cc = 0
+
                 For b = cLo To cHi
+
                     cc = cc + 1
+
                     dataArr(rr, cc) = finalArr(a, b)
+
                 Next b
+
             Next a
+
         End If
+
 
     ElseIf LCase$(orient) = "col" Then
+
         rowsData = rHi - rLo + 1
+
         If hasHeader Then
+
             hdr = HeaderFromCol(finalArr, cLo, rLo, rHi)
+
             hdr = Hdr_EnsureUnique1D(hdr)
+
             ' dati = colonne successive
+
             colsData = (cHi - cLo)
+
             If colsData <= 0 Then
+
                 ReDim dataArr(1 To rowsData, 1 To 0)
+
             Else
+
                 ReDim dataArr(1 To rowsData, 1 To colsData)
+
                 For i = 1 To rowsData
+
                     For j = 1 To colsData
+
                         dataArr(i, j) = finalArr(rLo + i - 1, cLo + j)
+
                     Next j
+
                 Next i
+
             End If
+
         Else
+
             ' header generico R1..Rr, dati = tutto il blocco (orientamento col)
+
             colsData = cHi - cLo + 1
+
             hdr = GenHeaderCols(colsData) ' coerente con resto libreria
+
             ReDim dataArr(1 To rowsData, 1 To colsData)
+
             Dim r2 As Long, c2 As Long, rr2 As Long, cc2 As Long
+
             rr2 = 0
+
             For r2 = rLo To rHi
+
                 rr2 = rr2 + 1
+
                 cc2 = 0
+
                 For c2 = cLo To cHi
+
                     cc2 = cc2 + 1
+
                     dataArr(rr2, cc2) = finalArr(r2, c2)
+
                 Next c2
+
             Next r2
+
         End If
+
     Else
+
         RaiseDf "DataFrame.LoadFromRange", edfInvalidHeader, "headerAt non riconosciuto: '" & headerAt & "'."
+
     End If
+
 
     ' Normalizza esposizione header (trim/collapse)
+
     Dim k As Long
+
     For k = LBound(hdr) To UBound(hdr)
+
         hdr(k) = CollapseSpaces(Trim$(CStr(hdr(k))))
+
     Next k
+
     hdr = Hdr_EnsureUnique1D(hdr)
 
+
     ' -------- 5) Commit in oggetto + invarianti/metriche --------
+
     mHeader = hdr
+
     mData = dataArr
+
     G_EnsureDataHeaderAgree "DataFrame.LoadFromRange"
 
+
     ' metriche
+
     Dim dt As Double: dt = Timer - t0
+
     If dt < 0# Then dt = dt + 24# * 3600#
+
     mMetrics("source") = "Range:" & rng.Address(0, 0)
-    mMetrics("bounds_policy") = LCase$(bounds)
+
+    'mMetrics("bounds_policy") = LCase$(bounds)
+
+    mMetrics("bounds_policy") = bounds
+
     mMetrics("orientation") = LCase$(orient)
+
     mMetrics("rows") = RowsCount
+
     mMetrics("cols") = ColsCount
+
     mMetrics("extended_rows") = extendedRows
-    If LCase$(bounds) = "trimouterempty" Or LCase$(bounds) = "smart" Then
+
+    'If LCase$(bounds) = "trimouterempty" Or LCase$(bounds) = "smart" Then
+
+    If bounds = dfTrimOuterEmpty Or bounds = dfSmart Then
+
         mMetrics("trim_top") = cutTop
+
         mMetrics("trim_bottom") = cutBottom
+
         mMetrics("trim_left") = cutLeft
+
         mMetrics("trim_right") = cutRight
+
     End If
+
     mMetrics("read_ms") = CLng(dt * 1000#)
 
+
     If mDebug Then
+
         Debug.Print "DF.LoadFromRange"; _
+
                     " addr=" & rng.Address(0, 0); _
-                    " bounds=" & LCase$(bounds); _
+
+                    " bounds=" & bounds; _
+
                     " orient=" & LCase$(orient); _
+
                     " rows=" & RowsCount; _
+
                     " cols=" & ColsCount; _
+
                     " extRows=" & extendedRows; _
+
                     " ms=" & CLng(dt * 1000#)
+
     End If
 
+
     Set LoadFromRange = Me
+
 End Function
 
+Enum DFBounds
+    dfLiteral = 1
+    dfCurrentRegion = 2
+    dfTrimOuterEmpty = 3
+    dfSmart = 4
+End Enum
 
 '==============================================================================
 ' [SEC] Core Ops
@@ -901,4 +1115,5 @@ Private Sub G_EnsureDataHeaderAgree(ByVal src As String)
 End Sub
 
 '=== Fine Helpers ==============================================================
+
 
