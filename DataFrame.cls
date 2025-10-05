@@ -1,12 +1,12 @@
-VERSION 1.0 CLASS
-BEGIN
-  MultiUse = -1  'True
-END
-Attribute VB_Name = "DataFrame"
-Attribute VB_GlobalNameSpace = False
-Attribute VB_Creatable = False
-Attribute VB_PredeclaredId = False
-Attribute VB_Exposed = False
+'VERSION 1.0 CLASS
+'BEGIN
+'  MultiUse = -1  'True
+'End
+'Attribute VB_Name = "DataFrame"
+'Attribute VB_GlobalNameSpace = False
+'Attribute VB_Creatable = False
+'Attribute VB_PredeclaredId = False
+'Attribute VB_Exposed = False
 '@ModuleDescription "DataFrame fluente su Variant(,) 1-based: lettura/scrittura da Range/ListObject; operazioni in memoria; diagnostica opzionale."
 '@Folder("LibreriaVBA/Facade")
 Option Explicit
@@ -41,7 +41,24 @@ Private Enum DFErr
     edfJaggedRowsMismatch = 11040
     edfInvalidKeysSpec = 11050
     edfHeaderKeysMismatch = 11060
+    edfRuntimeError = 11999
 End Enum
+
+
+Public Enum DFHeaderAt
+    dfRow = 1
+    dfColumn = 2
+End Enum
+
+
+Public Enum DFBounds
+    dfliteral = 1
+    dfCurrentRegion = 2
+    dfTrimOuterEmpty = 3
+    dfSmart = 4
+End Enum
+
+
 
 Private Sub RaiseDf(ByVal src As String, ByVal code As DFErr, ByVal message As String)
     Err.Raise vbObjectError + code, src, message
@@ -142,7 +159,7 @@ End Property
 '==============================================================================
 '@Description "Crea/riusa l'istanza caricando dati da array + header"
 Public Function LoadFromArray(ByRef data As Variant, ByRef header As Variant) As DataFrame
-Attribute LoadFromArray.VB_Description = "Crea/riusa l'istanza caricando dati da array + header"
+
     If Not IsArray(data) Then RaiseDf "DataFrame.LoadFromArray", edfInvalidData, "Parametro 'data' non è un array."
     If Not IsArray(header) Then RaiseDf "DataFrame.LoadFromArray", edfInvalidHeader, "Parametro 'header' non è un array."
 
@@ -230,64 +247,45 @@ End Function
 
 
 '@Description "Carica da Range (hasHeader/headerAt) con bounds: literal | currentRegion | trimOuterEmpty | smart"
+
+
+
 Public Function LoadFromRange(ByVal rng As Range, _
+                                Optional ByVal hasHeader As Boolean = True, _
+                                Optional ByVal headerAt As DFHeaderAt = dfRow, _
+                                Optional ByVal bounds As DFBounds = dfliteral, _
+                                Optional ByVal maxExtendRows As Long = 100000) As DataFrame
 
-                              Optional ByVal hasHeader As Boolean = True, _
-
-                              Optional ByVal headerAt As String = "row", _
-
-                              Optional ByRef bounds As DFBounds = dfLiteral, _
-
-                              Optional ByVal maxExtendRows As Long = 100000) As DataFrame
-
-   
 
 Dim t0 As Double: t0 = Timer
 
  
 
     If rng Is Nothing Then _
-
         RaiseDf "DataFrame.LoadFromRange", edfInvalidData, "Range non valido (Nothing)."
-
     If rng.Areas.Count > 1 Then _
-
         RaiseDf "DataFrame.LoadFromRange", edfInvalidData, "Range non contiguo (Areas.Count>1)."
 
-
     Dim ws As Worksheet: Set ws = rng.Worksheet
-
     Dim baseRng As Range, workRng As Range, finalRng As Range
-
     Dim arr As Variant
-
     Dim r As Long, c As Long               ' dimensioni array (uso generico)
-
     Dim i As Long, j As Long               ' indici loop (unica dichiarazione)
-
     Dim orient As String
-
     Dim cutTop As Long, cutBottom As Long, cutLeft As Long, cutRight As Long
-
     Dim extendedRows As Long: extendedRows = 0
+
 
 
     ' -------- 1) Determina range di base secondo bounds --------
 
     Select Case bounds 'LCase$(bounds)
-
         Case dfCurrentRegion, dfSmart
-
             Set baseRng = rng.Cells(1, 1).CurrentRegion
-
-        Case dfLiteral, dfTrimOuterEmpty
-
+        Case dfliteral, dfTrimOuterEmpty
             Set baseRng = rng
-
         Case Else
-
             RaiseDf "DataFrame.LoadFromRange", edfInvalidData, "bounds non riconosciuto: '" & bounds & "'."
-
     End Select
 
 
@@ -296,35 +294,21 @@ Dim t0 As Double: t0 = Timer
     'If LCase$(bounds) = "trimouterempty" Or LCase$(bounds) = "smart" Then
 
     If bounds = dfTrimOuterEmpty Or bounds = dfSmart Then
-
         arr = baseRng.Value2         ' lettura in blocco
-
         r = UBound(arr, 1) - LBound(arr, 1) + 1
-
         c = UBound(arr, 2) - LBound(arr, 2) + 1
-
         Call DetectOuterEmptyCuts(arr, cutTop, cutBottom, cutLeft, cutRight)
-
+        
         ' Se tutto vuoto, non tagliare oltre il minimo (lascia baseRng)
-
         If cutTop = 0 And cutBottom = 0 And cutLeft = 0 And cutRight = 0 Then
-
             Set workRng = baseRng
-
         Else
-
             Set workRng = baseRng.Offset(cutTop, cutLeft).Resize( _
-
                           baseRng.rows.Count - cutTop - cutBottom, _
-
                           baseRng.Columns.Count - cutLeft - cutRight)
-
         End If
-
     Else
-
         Set workRng = baseRng
-
     End If
 
 
@@ -629,19 +613,12 @@ Dim t0 As Double: t0 = Timer
     If mDebug Then
 
         Debug.Print "DF.LoadFromRange"; _
-
                     " addr=" & rng.Address(0, 0); _
-
                     " bounds=" & bounds; _
-
                     " orient=" & LCase$(orient); _
-
                     " rows=" & RowsCount; _
-
                     " cols=" & ColsCount; _
-
                     " extRows=" & extendedRows; _
-
                     " ms=" & CLng(dt * 1000#)
 
     End If
@@ -651,12 +628,7 @@ Dim t0 As Double: t0 = Timer
 
 End Function
 
-Enum DFBounds
-    dfLiteral = 1
-    dfCurrentRegion = 2
-    dfTrimOuterEmpty = 3
-    dfSmart = 4
-End Enum
+
 
 '==============================================================================
 ' [SEC] Core Ops
@@ -743,9 +715,103 @@ End Function
 
 '@Description "Scrive su ListObject (replace body; opz. aggiorna header)"
 '  TODO[DF:IO]: full replace DataBodyRange con mData, gestione header
-Public Function WriteTo(ByVal lo As ListObject) As Long
+Public Function WriteToListObject(ByVal lo As ListObject) As Long
     ' TODO: ritorna righe scritte
 End Function
+
+'@Description "Scrive header + dati partendo SEMPRE da rng.Cells(1,1)."
+Public Function WriteToRange( _
+    ByVal rng As Range, _
+    Optional ByVal includeHeader As Boolean = True _
+) As DataFrame
+    On Error GoTo EH
+
+    If rng Is Nothing Then
+        RaiseDf "DataFrame.WriteToRange", edfInvalidData, "Range destinazione non valido (Nothing)."
+    End If
+    G_EnsureDataHeaderAgree "DataFrame.WriteToRange"
+    If ColsCount < 1 Then
+        RaiseDf "DataFrame.WriteToRange", edfInvalidData, "Nessuna colonna da scrivere."
+    End If
+
+    Dim t0 As Double: t0 = Timer
+
+    ' Switch performance
+    Dim oldCalc As XlCalculation
+    Dim oldScrUpd As Boolean, oldEvents As Boolean
+    oldCalc = Application.Calculation
+    oldScrUpd = Application.ScreenUpdating
+    oldEvents = Application.EnableEvents
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    ' Ancorati sempre alla prima cella del range passato
+    Dim anchor As Range
+    Set anchor = rng.Cells(1, 1)
+
+    ' Costruisci outArr: header opzionale + dati
+    Dim rOut As Long, cOut As Long, i As Long, j As Long
+    Dim outArr As Variant
+    cOut = ColsCount
+
+    If includeHeader Then
+        rOut = RowsCount + 1
+        ReDim outArr(1 To rOut, 1 To cOut)
+        ' header
+        For j = 1 To cOut
+            outArr(1, j) = mHeader(j)
+        Next j
+        ' dati
+        If RowsCount > 0 Then
+            For i = 1 To RowsCount
+                For j = 1 To cOut
+                    If IsEmpty(mData(i, j)) Or mData(i, j) = vbNullString Then
+                        outArr(i + 1, j) = mNullToken
+                    Else
+                        outArr(i + 1, j) = mData(i, j)
+                    End If
+                Next j
+            Next i
+        End If
+    Else
+        rOut = RowsCount
+        If rOut = 0 Then GoTo CLEANUP
+        ReDim outArr(1 To rOut, 1 To cOut)
+        For i = 1 To rOut
+            For j = 1 To cOut
+                If IsEmpty(mData(i, j)) Or mData(i, j) = vbNullString Then
+                    outArr(i, j) = mNullToken
+                Else
+                    outArr(i, j) = mData(i, j)
+                End If
+            Next j
+        Next i
+    End If
+
+    ' Scrittura in blocco a partire da anchor
+    anchor.Resize(rOut, cOut).Value2 = outArr
+
+    ' metriche minime
+    Dim dt As Double: dt = Timer - t0
+    If dt < 0# Then dt = dt + 24# * 3600#
+    mMetrics("write_ms") = CLng(dt * 1000#)
+    mMetrics("write_addr") = anchor.Address(0, 0)
+    mMetrics("write_rows") = rOut
+    mMetrics("write_cols") = cOut
+
+    Set WriteToRange = Me
+    GoTo CLEANUP
+
+EH:
+    RaiseDf "DataFrame.WriteToRange", edfRuntimeError, "Errore di scrittura: " & Err.Number & " - " & Err.Description
+
+CLEANUP:
+    Application.ScreenUpdating = oldScrUpd
+    Application.EnableEvents = oldEvents
+    Application.Calculation = oldCalc
+End Function
+
 
 '@Description "Appende righe a ListObject"
 '  TODO[DF:IO]: append in coda
@@ -945,11 +1011,6 @@ Private Function GenHeaderCols(ByVal n As Long) As Variant
 End Function
 
 
-
-
-
-
-
 '@Description "True se v è un array 2D reale (ha la 2^ dimensione)"
 Private Function Arr_Is2D(ByRef v As Variant) As Boolean
     On Error Resume Next
@@ -1003,7 +1064,7 @@ Private Function Arr_To1D1(ByRef v As Variant) As Variant
     Arr_To1D1 = out
 End Function
 
-'@Description "Riduce un header 2D lineare a 1D 1-based (1×N o N×1)"
+'@Description "Riduce un header 2D ?lineare? a 1D 1-based (1×N o N×1)"
 Private Function Hdr_2DLinearTo1D(ByRef hdr As Variant) As Variant
     If Not IsArray(hdr) Then RaiseDf "DataFrame.Hdr_2DLinearTo1D", edfInvalidHeader, "Input non è un array."
     Dim rLo As Long, rHi As Long, cLo As Long, cHi As Long
@@ -1115,5 +1176,6 @@ Private Sub G_EnsureDataHeaderAgree(ByVal src As String)
 End Sub
 
 '=== Fine Helpers ==============================================================
+
 
 
