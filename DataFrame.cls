@@ -33,7 +33,7 @@ Private mTypes As Variant           ' Array 1D con tipo per colonna (opz.)
 Private mMetrics As Object          ' Dictionary pAer metriche
 Private mDebug As Boolean
 
-' ====== Errori & utilità (privati) ==========================================
+' ====== Errori & utilitÃ  (privati) ==========================================
 Private Enum DFErr
     edfInvalidData = 11010
     edfInvalidHeader = 11020
@@ -58,26 +58,27 @@ Private Sub Class_Initialize()
 End Sub
 
 Private Sub Class_Terminate()
-    ' Niente di speciale per ora
+    Set mMetrics = Nothing
+    Set mAliasMap = Nothing
 End Sub
 
 '==============================================================================
 ' [SEC] Properties RO
 ' RD_BOOKMARK: DF: Props RO
 '==============================================================================
-'' @Description: Restituisce il numero di righe (0 se mData non è inizializzato)"
+'' @Description: Restituisce il numero di righe (0 se mData non Ã¨ inizializzato)"
 Public Property Get RowsCount() As Long
     If IsArray(mData) Then RowsCount = UBound(mData, 1) - LBound(mData, 1) + 1
 End Property
 
-'@Description "Restituisce il numero di colonne (0 se mData non è inizializzato)"
+'@Description "Restituisce il numero di colonne (0 se mData non Ã¨ inizializzato)"
 Public Property Get ColsCount() As Long
     If IsArray(mData) Then ColsCount = UBound(mData, 2) - LBound(mData, 2) + 1
 End Property
 
-'@Description "Forma R×C in stringa (es. "12×5")"
+'@Description "Forma RÃ—C in stringa (es. "12Ã—5")"
 Public Property Get Shape() As String
-    Shape = CStr(RowsCount) & "×" & CStr(ColsCount)
+    Shape = CStr(RowsCount) & "Ã—" & CStr(ColsCount)
 End Property
 
 '@Description "Copia difensiva dell'header 1D 1-based"
@@ -142,8 +143,8 @@ End Property
 '@Description "Crea/riusa l'istanza caricando dati da array + header"
 Public Function LoadFromArray(ByRef data As Variant, ByRef header As Variant) As DataFrame
 Attribute LoadFromArray.VB_Description = "Crea/riusa l'istanza caricando dati da array + header"
-    If Not IsArray(data) Then RaiseDf "DataFrame.LoadFromArray", edfInvalidData, "Parametro 'data' non è un array."
-    If Not IsArray(header) Then RaiseDf "DataFrame.LoadFromArray", edfInvalidHeader, "Parametro 'header' non è un array."
+    If Not IsArray(data) Then RaiseDf "DataFrame.LoadFromArray", edfInvalidData, "Parametro 'data' non Ã¨ un array."
+    If Not IsArray(header) Then RaiseDf "DataFrame.LoadFromArray", edfInvalidHeader, "Parametro 'header' non Ã¨ un array."
 
     ' DATA: fast-path 2D, altrimenti jagged?2D
     If Arr_Is2D(data) Then
@@ -151,7 +152,7 @@ Attribute LoadFromArray.VB_Description = "Crea/riusa l'istanza caricando dati da
     ElseIf IsArray(data(LBound(data))) Then
         mData = Arr_JaggedTo2D1(data)
     Else
-        RaiseDf "DataFrame.LoadFromArray", edfInvalidData, "Array 'data' non riconosciuto (né 2D né jagged)."
+        RaiseDf "DataFrame.LoadFromArray", edfInvalidData, "Array 'data' non riconosciuto (nÃ© 2D nÃ© jagged)."
     End If
 
     ' HEADER: 2D lineare ? 1D, altrimenti 1D normalizzato
@@ -190,7 +191,7 @@ Public Function LoadFromListObject(ByVal lo As ListObject) As DataFrame
     hdr = Hdr_EnsureUnique1D(hdr)  ' suffissi _2, _3... in caso di duplicati (case-insensitive)
     mHeader = hdr
 
-    ' ----- Dati: lettura in blocco; gestisci tabella vuota come 0×C -----
+    ' ----- Dati: lettura in blocco; gestisci tabella vuota come 0Ã—C -----
     Dim body As Range
     On Error Resume Next
     Set body = lo.DataBodyRange    ' Nothing se la tabella non ha righe
@@ -614,7 +615,7 @@ Private Function ResolveHeaderAt(ByVal headerAt As String, ByVal rows As Long, B
     End Select
 End Function
 
-'@Description "True se la cella è logicamente vuota (Empty o stringa vuota/spazi)"
+'@Description "True se la cella Ã¨ logicamente vuota (Empty o stringa vuota/spazi)"
 Private Function IsEmptyLike(ByVal v As Variant) As Boolean
     If IsEmpty(v) Then
         IsEmptyLike = True
@@ -735,7 +736,7 @@ End Function
 
 
 
-'@Description "True se v è un array 2D reale (ha la 2^ dimensione)"
+'@Description "True se v Ã¨ un array 2D reale (ha la 2^ dimensione)"
 Private Function Arr_Is2D(ByRef v As Variant) As Boolean
     On Error Resume Next
     Dim ub2 As Long: ub2 = UBound(v, 2)
@@ -750,11 +751,11 @@ Private Function Arr_JaggedTo2D1(ByRef jag As Variant) As Variant
     Dim rows As Long, cols As Long
     Dim i As Long, j As Long
     Dim first As Variant, rowv As Variant
-    If Not IsArray(jag) Then RaiseDf "DataFrame.Arr_JaggedTo2D1", edfInvalidData, "Input non è un array."
+    If Not IsArray(jag) Then RaiseDf "DataFrame.Arr_JaggedTo2D1", edfInvalidData, "Input non Ã¨ un array."
 
     r0 = LBound(jag): r1 = UBound(jag)
     first = jag(r0)
-    If Not IsArray(first) Then RaiseDf "DataFrame.Arr_JaggedTo2D1", edfInvalidData, "Non è un array di array."
+    If Not IsArray(first) Then RaiseDf "DataFrame.Arr_JaggedTo2D1", edfInvalidData, "Non Ã¨ un array di array."
     c0 = LBound(first): c1 = UBound(first)
 
     rows = r1 - r0 + 1
@@ -766,7 +767,7 @@ Private Function Arr_JaggedTo2D1(ByRef jag As Variant) As Variant
     For i = 1 To rows
         rowv = jag(r0 + i - 1)
         ' (opz) verifica lunghezze allineate
-        If Not IsArray(rowv) Then RaiseDf "DataFrame.Arr_JaggedTo2D1", edfJaggedRowsMismatch, "Riga non è un array."
+        If Not IsArray(rowv) Then RaiseDf "DataFrame.Arr_JaggedTo2D1", edfJaggedRowsMismatch, "Riga non Ã¨ un array."
         If LBound(rowv) <> c0 Or UBound(rowv) <> c1 Then _
             RaiseDf "DataFrame.Arr_JaggedTo2D1", edfJaggedRowsMismatch, "Lunghezze righe non uniformi."
         For j = 1 To cols
@@ -778,7 +779,7 @@ End Function
 
 '@Description "Normalizza un array 1D (0-based o 1-based) a 1-based"
 Private Function Arr_To1D1(ByRef v As Variant) As Variant
-    If Not IsArray(v) Then RaiseDf "DataFrame.Arr_To1D1", edfInvalidHeader, "Input non è un array."
+    If Not IsArray(v) Then RaiseDf "DataFrame.Arr_To1D1", edfInvalidHeader, "Input non Ã¨ un array."
     Dim lo As Long, hi As Long, n As Long, i As Long
     lo = LBound(v): hi = UBound(v): n = hi - lo + 1
     Dim out As Variant: ReDim out(1 To n)
@@ -788,9 +789,9 @@ Private Function Arr_To1D1(ByRef v As Variant) As Variant
     Arr_To1D1 = out
 End Function
 
-'@Description "Riduce un header 2D “lineare” a 1D 1-based (1×N o N×1)"
+'@Description "Riduce un header 2D Â“lineareÂ” a 1D 1-based (1Ã—N o NÃ—1)"
 Private Function Hdr_2DLinearTo1D(ByRef hdr As Variant) As Variant
-    If Not IsArray(hdr) Then RaiseDf "DataFrame.Hdr_2DLinearTo1D", edfInvalidHeader, "Input non è un array."
+    If Not IsArray(hdr) Then RaiseDf "DataFrame.Hdr_2DLinearTo1D", edfInvalidHeader, "Input non Ã¨ un array."
     Dim rLo As Long, rHi As Long, cLo As Long, cHi As Long
     Dim n As Long, i As Long
     rLo = LBound(hdr, 1): rHi = UBound(hdr, 1)
@@ -900,3 +901,4 @@ Private Sub G_EnsureDataHeaderAgree(ByVal src As String)
 End Sub
 
 '=== Fine Helpers ==============================================================
+
