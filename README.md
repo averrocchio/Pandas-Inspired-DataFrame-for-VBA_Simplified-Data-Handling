@@ -18,6 +18,9 @@ Implemented areas:
 - **Loaders**: `LoadFromArray`, `LoadFromListObject`, `LoadFromRange`.
 - **Core ops (available)**: `Project`, `Rename`, `Append`, `Filter`, `Sort`, `Dedup`, `JoinRight` (MVP), `Clean`, `InferTypes`.
 - **I/O**: `AsArray`, `WriteToRange`, `Metrics`.
+- **Core ops (available)**: `Project`, `Rename`, `Append`.
+- **Core ops (planned)**: `Filter`, `Sort`, `Dedup`, `JoinRight`, `Clean`, `InferTypes`.
+- **I/O**: `AsArray`, `WriteToRange`.
 
 ## Usage examples (copy/paste ready)
 
@@ -43,6 +46,9 @@ End Sub
 ### 2) Filter + sort
 ```vb
 Sub Example_Filter_Sort()
+### 2) Rename columns
+```vb
+Sub Example_Rename()
     Dim df As New DataFrame
     ' ...load df...
 
@@ -83,6 +89,19 @@ Sub Example_Clean_InferTypes()
 
     Dim out As DataFrame
     Set out = df.Clean(True, True, True).InferTypes()
+    Set out = df.Rename("dept:team,name:full_name")
+End Sub
+```
+
+### 3) Append rows by header alignment
+```vb
+Sub Example_Append()
+    Dim leftDf As New DataFrame
+    Dim rightDf As New DataFrame
+    ' ...load both dataframes...
+
+    Dim merged As DataFrame
+    Set merged = leftDf.Append(rightDf)
 End Sub
 ```
 
@@ -91,6 +110,10 @@ End Sub
 - `Sort` is stable but uses insertion sort (good for small/medium sets, not yet optimised for very large datasets).
 - `JoinRight` MVP requires unique keys in left dataframe; duplicate keys raise error.
 - `AppendTo` and `WriteToListObject` are still TODO.
+- `Project` rejects duplicated column specifications (e.g. `"name,name"`).
+- `Rename` currently supports mapping via string (`"old:new"`) or `Scripting.Dictionary`.
+- `Append` requires schema compatibility by header name; missing columns raise an explicit error.
+- `Filter`, `Sort`, `Dedup`, `JoinRight`, `Clean`, `InferTypes` are still stubs.
 
 ## Manual test module
 A repeatable manual test module is included in `DataFrameTests.bas` with these entry points:
