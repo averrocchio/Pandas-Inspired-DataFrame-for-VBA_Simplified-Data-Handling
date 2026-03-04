@@ -16,6 +16,8 @@ The library centres on a `DataFrame` class that encapsulates a 2‑D Variant arr
 
 Implemented areas:
 - **Loaders**: `LoadFromArray`, `LoadFromListObject`, `LoadFromRange`.
+- **Core ops (available)**: `Project`, `Rename`, `Append`, `Filter`, `Sort`, `Dedup`, `JoinRight` (MVP), `Clean`, `InferTypes`.
+- **I/O**: `AsArray`, `WriteToRange`, `Metrics`.
 - **Core ops (available)**: `Project`, `Rename`, `Append`.
 - **Core ops (planned)**: `Filter`, `Sort`, `Dedup`, `JoinRight`, `Clean`, `InferTypes`.
 - **I/O**: `AsArray`, `WriteToRange`.
@@ -41,6 +43,9 @@ Sub Example_Project()
 End Sub
 ```
 
+### 2) Filter + sort
+```vb
+Sub Example_Filter_Sort()
 ### 2) Rename columns
 ```vb
 Sub Example_Rename()
@@ -48,6 +53,42 @@ Sub Example_Rename()
     ' ...load df...
 
     Dim out As DataFrame
+    Set out = df.Filter("city contains rom").Sort("city,id", "asc,desc")
+End Sub
+```
+
+### 3) Dedup by key
+```vb
+Sub Example_Dedup()
+    Dim df As New DataFrame
+    ' ...load df...
+
+    df.Keys = "CustomerID"
+    Dim out As DataFrame
+    Set out = df.Dedup("keep_first")
+End Sub
+```
+
+### 4) JoinRight MVP
+```vb
+Sub Example_JoinRight()
+    Dim leftDf As New DataFrame
+    Dim rightDf As New DataFrame
+    ' ...load both dataframes with key "id"...
+
+    Dim out As DataFrame
+    Set out = leftDf.JoinRight(rightDf, "id", "right", "_L,_R")
+End Sub
+```
+
+### 5) Clean + InferTypes
+```vb
+Sub Example_Clean_InferTypes()
+    Dim df As New DataFrame
+    ' ...load df...
+
+    Dim out As DataFrame
+    Set out = df.Clean(True, True, True).InferTypes()
     Set out = df.Rename("dept:team,name:full_name")
 End Sub
 ```
@@ -65,6 +106,10 @@ End Sub
 ```
 
 ## Known limits and edge cases
+- `Filter` currently supports only a single condition (`=`, `<>`, `>`, `<`, `contains`).
+- `Sort` is stable but uses insertion sort (good for small/medium sets, not yet optimised for very large datasets).
+- `JoinRight` MVP requires unique keys in left dataframe; duplicate keys raise error.
+- `AppendTo` and `WriteToListObject` are still TODO.
 - `Project` rejects duplicated column specifications (e.g. `"name,name"`).
 - `Rename` currently supports mapping via string (`"old:new"`) or `Scripting.Dictionary`.
 - `Append` requires schema compatibility by header name; missing columns raise an explicit error.
@@ -78,6 +123,8 @@ A repeatable manual test module is included in `DataFrameTests.bas` with these e
 - `Test_Append_SchemaMismatch_ShouldFail`
 - `Test_Filter_Contains`
 - `Test_Dedup_ByKeys`
+- `Test_Sort_MultiColumn`
+- `Test_Clean_And_InferTypes`
 
 Each test prints `PASS/FAIL` details in the Immediate window.
 
