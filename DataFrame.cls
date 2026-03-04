@@ -660,22 +660,157 @@ End Function
 
 '@Description "Proiezione/riordino colonne"
 Public Function Project(ByVal cols As String) As DataFrame
+    ' Mini-spec:
+    ' 1) Accetta una lista colonne separata da virgole (nomi o indici).
+    ' 2) Preserva esattamente ordine e subset richiesto nel parametro cols.
+    ' 3) Valida esistenza/duplicati tramite resolver header centralizzato.
+    ' 4) Copia dati in memoria su nuovo DataFrame senza side-effect Excel.
+    ' 5) Gestisce DataFrame vuoto mantenendo schema coerente.
     Dim out As New DataFrame
-    ' TODO
+    G_EnsureDataHeaderAgree "DataFrame.Project"
+
+    Dim idx() As Long
+    idx = Hdr_ResolveIndicesFromSpec(cols, mHeader, mAliasMap)
+    If Not Arr_IsValidIndices(idx, ColsCount) Then
+        RaiseDf "DataFrame.Project", edfInvalidKeysSpec, "Specifica colonne non valida o con duplicati."
+    End If
+
+    Dim nCols As Long
+    nCols = UBound(idx) - LBound(idx) + 1
+
+    Dim outHeader As Variant
+    ReDim outHeader(1 To nCols)
+
+    Dim outData As Variant
+    Dim i As Long, j As Long
+    ReDim outData(1 To RowsCount, 1 To nCols)
+
+    For j = 1 To nCols
+        outHeader(j) = mHeader(idx(LBound(idx) + j - 1))
+        For i = 1 To RowsCount
+            outData(i, j) = mData(i, idx(LBound(idx) + j - 1))
+        Next i
+    Next j
+
+    out.mHeader = outHeader
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.G_EnsureDataHeaderAgree "DataFrame.Project"
+
     Set Project = out
 End Function
 
 '@Description "Rinomina colonne in base a mapping"
 Public Function Rename(ByVal map As Variant) As DataFrame
+    ' Mini-spec:
+    ' 1) Supporta mapping rename da Dictionary oppure stringa "old:new,...".
+    ' 2) Le chiavi sono risolte con nomi header (case-insensitive).
+    ' 3) Valida sintassi mapping e colonne mancanti con RaiseDf.
+    ' 4) Normalizza header rinominato (trim/collapse) e garantisce univocità.
+    ' 5) Non muta l'istanza corrente: ritorna nuovo DataFrame.
     Dim out As New DataFrame
-    ' TODO
+    G_EnsureDataHeaderAgree "DataFrame.Rename"
+
+    Dim outHeader As Variant
+    outHeader = Arr_To1D1(mHeader)
+
+    Dim pairs As Variant, pair As Variant, kv() As String
+    Dim i As Long, oldName As String, newName As String
+    Dim idx As Long
+
+    If IsObject(map) Then
+        If TypeName(map) <> "Dictionary" Then
+            RaiseDf "DataFrame.Rename", edfInvalidHeader, "Mapping oggetto non supportato: usare Scripting.Dictionary."
+        End If
+        For Each pair In map.Keys
+            oldName = CStr(pair)
+            newName = CStr(map(pair))
+            idx = Hdr_FindIndexByName(oldName, mHeader, mAliasMap)
+            outHeader(idx) = CollapseSpaces(Trim$(newName))
+        Next pair
+    Else
+        pairs = Split(CStr(map), ",")
+        For i = LBound(pairs) To UBound(pairs)
+            pair = Trim$(CStr(pairs(i)))
+            If Len(pair) = 0 Then GoTo ContinueLoop
+            kv = Split(CStr(pair), ":")
+            If UBound(kv) <> 1 Then
+                RaiseDf "DataFrame.Rename", edfInvalidHeader, "Mapping rename non valido: '" & pair & "'. Atteso old:new"
+            End If
+            oldName = Trim$(kv(0))
+            newName = CollapseSpaces(Trim$(kv(1)))
+            idx = Hdr_FindIndexByName(oldName, mHeader, mAliasMap)
+            outHeader(idx) = newName
+ContinueLoop:
+        Next i
+    End If
+
+    outHeader = Hdr_EnsureUnique1D(outHeader)
+
+    out.mHeader = outHeader
+    out.mData = mData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.G_EnsureDataHeaderAgree "DataFrame.Rename"
+
     Set Rename = out
 End Function
 
 '@Description "Append di righe allineando per nome"
 Public Function Append(ByVal rows As DataFrame) As DataFrame
+    ' Mini-spec:
+    ' 1) Appende le righe di un secondo DataFrame allineando le colonne per nome.
+    ' 2) Richiede corrispondenza 1:1 degli header tra sorgente e input rows.
+    ' 3) Preserva l'ordine colonne dell'istanza corrente (left schema).
+    ' 4) Copia in memoria in blocco su nuovo array 2D 1-based.
+    ' 5) Solleva errore esplicito su schema mismatch o input non valido.
     Dim out As New DataFrame
-    ' TODO
+    If rows Is Nothing Then
+        RaiseDf "DataFrame.Append", edfInvalidData, "DataFrame da appendere non valido (Nothing)."
+    End If
+
+    G_EnsureDataHeaderAgree "DataFrame.Append"
+    If (Not IsArray(rows.mData)) Or (Not IsArray(rows.mHeader)) Then
+        RaiseDf "DataFrame.Append", edfInvalidData, "DataFrame da appendere non inizializzato."
+    End If
+
+    If rows.ColsCount <> ColsCount Then
+        RaiseDf "DataFrame.Append", edfHeaderKeysMismatch, "Numero colonne non coerente tra DataFrame."
+    End If
+
+    Dim c As Long, i As Long, j As Long
+    Dim rightIdx() As Long
+    ReDim rightIdx(1 To ColsCount)
+
+    For c = 1 To ColsCount
+        rightIdx(c) = Hdr_FindIndexByName(CStr(mHeader(c)), rows.mHeader, rows.mAliasMap)
+    Next c
+
+    Dim outRows As Long
+    outRows = RowsCount + rows.RowsCount
+
+    Dim outData As Variant
+    ReDim outData(1 To outRows, 1 To ColsCount)
+
+    For i = 1 To RowsCount
+        For j = 1 To ColsCount
+            outData(i, j) = mData(i, j)
+        Next j
+    Next i
+
+    For i = 1 To rows.RowsCount
+        For j = 1 To ColsCount
+            outData(RowsCount + i, j) = rows.mData(i, rightIdx(j))
+        Next j
+    Next i
+
+    out.mHeader = Arr_To1D1(mHeader)
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.G_EnsureDataHeaderAgree "DataFrame.Append"
+
     Set Append = out
 End Function
 
