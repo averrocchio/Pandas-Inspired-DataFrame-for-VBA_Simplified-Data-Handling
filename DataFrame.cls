@@ -635,72 +635,186 @@ End Function
 ' RD_BOOKMARK: DF: Ops Core
 '==============================================================================
 '@Description "Filtra righe in base a DSL condizionale"
-'  TODO[DF:Ops]: valutare condition riga-per-riga, preservare header
 Public Function Filter(ByVal condition As String) As DataFrame
+    ' Mini-spec:
+    ' 1) Supporta condizione singola nel formato: "col op valore".
+    ' 2) Operatori MVP: =, <>, >, <, contains (case-insensitive per contains).
+    ' 3) Preserva header e ordine righe originali (filtro stabile).
+    ' 4) Gestisce DataFrame vuoto restituendo schema invariato.
     Dim out As New DataFrame
-    ' TODO: out.mData = ... ; out.mHeader = mHeader
+    G_EnsureDataHeaderAgree "DataFrame.Filter"
+
+    Dim colIdx As Long, op As String, rhs As String
+    ParseCondition condition, colIdx, op, rhs
+
+    Dim keep() As Boolean
+    ReDim keep(1 To RowsCount)
+
+    Dim i As Long, kept As Long
+    For i = 1 To RowsCount
+        If EvalCondition(mData(i, colIdx), op, rhs) Then
+            keep(i) = True
+            kept = kept + 1
+        End If
+    Next i
+
+    Dim outData As Variant
+    ReDim outData(1 To kept, 1 To ColsCount)
+
+    Dim rOut As Long, j As Long
+    rOut = 0
+    For i = 1 To RowsCount
+        If keep(i) Then
+            rOut = rOut + 1
+            For j = 1 To ColsCount
+                outData(rOut, j) = mData(i, j)
+            Next j
+        End If
+    Next i
+
+    out.mHeader = Arr_To1D1(mHeader)
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.mTypes = mTypes
+    out.G_EnsureDataHeaderAgree "DataFrame.Filter"
+
     Set Filter = out
 End Function
 
 '@Description "Ordinamento stabile multi-colonna"
-'  TODO[DF:Ops]: stable sort con specifica colonne e direzioni
 Public Function Sort(ByVal cols As String, Optional ByVal ascending As String = "") As DataFrame
+    ' Mini-spec:
+    ' 1) Ordina per una o più colonne (spec separata da virgole).
+    ' 2) Direzioni opzionali via ascending="asc,desc,..." (default asc).
+    ' 3) Implementazione stabile su indice righe (insertion sort MVP).
+    ' 4) Nessun side-effect: ritorna nuovo DataFrame.
     Dim out As New DataFrame
     G_EnsureDataHeaderAgree "DataFrame.Sort"
 
     Dim idx() As Long
     idx = Hdr_ResolveIndicesFromSpec(cols, mHeader, mAliasMap)
     If Not Arr_IsValidIndices(idx, ColsCount) Then
-        RaiseDf "DataFrame.Sort", edfInvalidKeysSpec, "Specifica colonne sort non valida o con duplicati."
+        RaiseDf "DataFrame.Sort", edfInvalidKeysSpec, "Specifica colonne sort non valida."
     End If
 
-    Dim nRows As Long: nRows = RowsCount
-    Dim order() As Long
-    Dim i As Long, j As Long, pos As Long, cur As Long
+    Dim asc() As Boolean
+    asc = ParseSortDirections(ascending, UBound(idx) - LBound(idx) + 1)
 
-    Dim dirs() As Boolean
-    dirs = ParseSortDirections(ascending, UBound(idx) - LBound(idx) + 1)
+    Dim ord() As Long
+    Dim i As Long, j As Long, k As Long
+    ReDim ord(1 To RowsCount)
+    For i = 1 To RowsCount
+        ord(i) = i
+    Next i
+
+    Dim keyRow As Long
+    For i = 2 To RowsCount
+        keyRow = ord(i)
+        j = i - 1
+        Do While j >= 1 And CompareRowsByCols(ord(j), keyRow, idx, asc) > 0
+            ord(j + 1) = ord(j)
+            j = j - 1
+        Loop
+        ord(j + 1) = keyRow
+    Next i
 
     Dim outData As Variant
-    If nRows = 0 Then
-        ReDim outData(1 To 0, 1 To ColsCount)
-    Else
-        ReDim order(1 To nRows)
-        For i = 1 To nRows
-            order(i) = i
-        Next i
+    ReDim outData(1 To RowsCount, 1 To ColsCount)
+    For i = 1 To RowsCount
+        For k = 1 To ColsCount
+            outData(i, k) = mData(ord(i), k)
+        Next k
+    Next i
 
-        ' insertion sort stabile sugli indici riga
-        For i = 2 To nRows
-            cur = order(i)
-            pos = i - 1
-            Do While pos >= 1 And CompareRowsBySpec(order(pos), cur, idx, dirs) > 0
-                order(pos + 1) = order(pos)
-                pos = pos - 1
-            Loop
-            order(pos + 1) = cur
-        Next i
+    out.mHeader = Arr_To1D1(mHeader)
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.mTypes = mTypes
+    out.G_EnsureDataHeaderAgree "DataFrame.Sort"
 
-        ReDim outData(1 To nRows, 1 To ColsCount)
-        For i = 1 To nRows
-            For j = 1 To ColsCount
-                outData(i, j) = mData(order(i), j)
-            Next j
-        Next i
-    End If
-
-    Dim outHeader As Variant
-    outHeader = Arr_To1D1(mHeader)
-
-    Set out = NewFrameFromParts(outData, outHeader)
     Set Sort = out
 End Function
 
 '@Description "Dedup su chiavi (policy: keep_first/keep_last/...)"
-'  TODO[DF:Ops]: usare mKeys; politiche duplicati
 Public Function Dedup(Optional ByVal policy As String = "keep_first") As DataFrame
+    ' Mini-spec:
+    ' 1) Dedup su tutte le colonne o su subset in mKeys (se impostato).
+    ' 2) Policy supportate: keep_first, keep_last.
+    ' 3) Preserva schema invariato, ritorna nuovo DataFrame.
     Dim out As New DataFrame
-    ' TODO
+    G_EnsureDataHeaderAgree "DataFrame.Dedup"
+
+    Dim keysIdx() As Long
+    If IsArray(mKeys) Then
+        keysIdx = mKeys
+        If Not Arr_IsValidIndices(keysIdx, ColsCount) Then
+            RaiseDf "DataFrame.Dedup", edfInvalidKeysSpec, "mKeys non valido."
+        End If
+    Else
+        ReDim keysIdx(1 To ColsCount)
+        Dim c As Long
+        For c = 1 To ColsCount
+            keysIdx(c) = c
+        Next c
+    End If
+
+    Dim keepLast As Boolean
+    policy = LCase$(Trim$(policy))
+    Select Case policy
+        Case "keep_first": keepLast = False
+        Case "keep_last": keepLast = True
+        Case Else
+            RaiseDf "DataFrame.Dedup", edfInvalidData, "Policy non supportata: " & policy
+    End Select
+
+    Dim seen As Object: Set seen = CreateObject("Scripting.Dictionary")
+    Dim keep() As Boolean
+    ReDim keep(1 To RowsCount)
+
+    Dim i As Long, key As String, kept As Long
+    If keepLast Then
+        For i = RowsCount To 1 Step -1
+            key = BuildRowKey(mData, i, keysIdx)
+            If Not seen.Exists(key) Then
+                seen.Add key, True
+                keep(i) = True
+                kept = kept + 1
+            End If
+        Next i
+    Else
+        For i = 1 To RowsCount
+            key = BuildRowKey(mData, i, keysIdx)
+            If Not seen.Exists(key) Then
+                seen.Add key, True
+                keep(i) = True
+                kept = kept + 1
+            End If
+        Next i
+    End If
+
+    Dim outData As Variant
+    ReDim outData(1 To kept, 1 To ColsCount)
+
+    Dim rOut As Long, j As Long
+    rOut = 0
+    For i = 1 To RowsCount
+        If keep(i) Then
+            rOut = rOut + 1
+            For j = 1 To ColsCount
+                outData(rOut, j) = mData(i, j)
+            Next j
+        End If
+    Next i
+
+    out.mHeader = Arr_To1D1(mHeader)
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.mTypes = mTypes
+    out.G_EnsureDataHeaderAgree "DataFrame.Dedup"
+
     Set Dedup = out
 End Function
 
@@ -900,8 +1014,119 @@ End Function
 Public Function JoinRight(ByVal right As DataFrame, ByVal Keys As String, _
                           Optional ByVal how As String = "inner", _
                           Optional ByVal suffixes As String = "_L,_R") As DataFrame
+    ' Mini-spec:
+    ' 1) MVP: join su chiavi con stessi nomi tra left (Me) e right.
+    ' 2) Tipi supportati: inner, right (default inner).
+    ' 3) Richiede chiavi univoche nel DataFrame left per evitare ambiguità.
+    ' 4) Output: colonne left + colonne right non-key (con suffisso in collisione).
     Dim out As New DataFrame
-    ' TODO
+    If right Is Nothing Then
+        RaiseDf "DataFrame.JoinRight", edfInvalidData, "DataFrame right non valido (Nothing)."
+    End If
+
+    G_EnsureDataHeaderAgree "DataFrame.JoinRight"
+    right.G_EnsureDataHeaderAgree "DataFrame.JoinRight"
+
+    Dim leftKeys() As Long, rightKeys() As Long
+    leftKeys = Hdr_ResolveIndicesFromSpec(Keys, mHeader, mAliasMap)
+    rightKeys = Hdr_ResolveIndicesFromSpec(Keys, right.mHeader, right.mAliasMap)
+
+    If Not Arr_IsValidIndices(leftKeys, ColsCount) Then _
+        RaiseDf "DataFrame.JoinRight", edfInvalidKeysSpec, "Specifica chiavi left non valida."
+    If Not Arr_IsValidIndices(rightKeys, right.ColsCount) Then _
+        RaiseDf "DataFrame.JoinRight", edfInvalidKeysSpec, "Specifica chiavi right non valida."
+
+    how = LCase$(Trim$(how))
+    If how <> "inner" And how <> "right" Then
+        RaiseDf "DataFrame.JoinRight", edfInvalidData, "how non supportato: " & how
+    End If
+
+    Dim sfxR As String
+    sfxR = ParseSuffixRight(suffixes)
+
+    Dim leftMap As Object: Set leftMap = CreateObject("Scripting.Dictionary")
+    Dim i As Long, j As Long, key As String
+    For i = 1 To RowsCount
+        key = BuildRowKey(mData, i, leftKeys)
+        If leftMap.Exists(key) Then
+            RaiseDf "DataFrame.JoinRight", edfInvalidData, "Chiavi duplicate nel DataFrame left (MVP richiede univocità)."
+        End If
+        leftMap.Add key, i
+    Next i
+
+    Dim rightNonKeyIdx() As Long
+    rightNonKeyIdx = BuildNonKeyIndex(right.ColsCount, rightKeys)
+
+    Dim outCols As Long
+    outCols = ColsCount + IIf(IsArray(rightNonKeyIdx), UBound(rightNonKeyIdx) - LBound(rightNonKeyIdx) + 1, 0)
+
+    Dim outHeader As Variant
+    ReDim outHeader(1 To outCols)
+
+    For j = 1 To ColsCount
+        outHeader(j) = mHeader(j)
+    Next j
+
+    Dim nRightAdd As Long
+    nRightAdd = 0
+    If IsArray(rightNonKeyIdx) Then nRightAdd = UBound(rightNonKeyIdx) - LBound(rightNonKeyIdx) + 1
+
+    For j = 1 To nRightAdd
+        Dim nm As String
+        nm = CStr(right.mHeader(rightNonKeyIdx(LBound(rightNonKeyIdx) + j - 1)))
+        If HeaderContains(outHeader, nm, ColsCount) Then nm = nm & sfxR
+        outHeader(ColsCount + j) = nm
+    Next j
+    outHeader = Hdr_EnsureUnique1D(outHeader)
+
+    Dim maxRows As Long
+    maxRows = right.RowsCount
+    Dim outData As Variant
+    ReDim outData(1 To maxRows, 1 To outCols)
+
+    Dim rOut As Long, leftRow As Long
+    rOut = 0
+    For i = 1 To right.RowsCount
+        key = BuildRowKey(right.mData, i, rightKeys)
+        If leftMap.Exists(key) Then
+            leftRow = CLng(leftMap(key))
+        Else
+            leftRow = 0
+        End If
+
+        If how = "right" Or leftRow > 0 Then
+            rOut = rOut + 1
+            For j = 1 To ColsCount
+                If leftRow > 0 Then
+                    outData(rOut, j) = mData(leftRow, j)
+                Else
+                    outData(rOut, j) = Empty
+                End If
+            Next j
+
+            For j = 1 To nRightAdd
+                outData(rOut, ColsCount + j) = right.mData(i, rightNonKeyIdx(LBound(rightNonKeyIdx) + j - 1))
+            Next j
+        End If
+    Next i
+
+    If rOut < maxRows Then
+        Dim trimmed As Variant
+        ReDim trimmed(1 To rOut, 1 To outCols)
+        For i = 1 To rOut
+            For j = 1 To outCols
+                trimmed(i, j) = outData(i, j)
+            Next j
+        Next i
+        outData = trimmed
+    End If
+
+    out.mHeader = outHeader
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.G_EnsureDataHeaderAgree "DataFrame.JoinRight"
+
     Set JoinRight = out
 End Function
 
@@ -909,15 +1134,89 @@ End Function
 Public Function Clean(Optional ByVal trimSpaces As Boolean = True, _
                       Optional ByVal CollapseSpaces As Boolean = True, _
                       Optional ByVal softCoerce As Boolean = True) As DataFrame
+    ' Mini-spec:
+    ' 1) Normalizza stringhe (trim/collapse) su tutte le celle.
+    ' 2) Converte token null comuni ("NA","N/A","NULL","-") in Empty.
+    ' 3) Soft-coerce numeri/date quando richiesto.
     Dim out As New DataFrame
-    ' TODO
+    G_EnsureDataHeaderAgree "DataFrame.Clean"
+
+    Dim outData As Variant
+    ReDim outData(1 To RowsCount, 1 To ColsCount)
+
+    Dim i As Long, j As Long
+    For i = 1 To RowsCount
+        For j = 1 To ColsCount
+            outData(i, j) = CleanValue(mData(i, j), trimSpaces, CollapseSpaces, softCoerce)
+        Next j
+    Next i
+
+    out.mHeader = Arr_To1D1(mHeader)
+    out.mData = outData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.G_EnsureDataHeaderAgree "DataFrame.Clean"
+
     Set Clean = out
 End Function
 
 '@Description "Inferenza soft dei tipi per colonna"
 Public Function InferTypes() As DataFrame
+    ' Mini-spec:
+    ' 1) Inferenza soft per colonna: number/date/text.
+    ' 2) Ignora Empty/Null/stringhe vuote durante il conteggio.
+    ' 3) Salva il risultato in mTypes e nelle metriche.
     Dim out As New DataFrame
-    ' TODO
+    G_EnsureDataHeaderAgree "DataFrame.InferTypes"
+
+    Dim types As Variant
+    ReDim types(1 To ColsCount)
+
+    Dim j As Long, i As Long
+    Dim nNum As Long, nDate As Long, nTxt As Long
+    Dim v As Variant, s As String
+
+    For j = 1 To ColsCount
+        nNum = 0: nDate = 0: nTxt = 0
+        For i = 1 To RowsCount
+            v = mData(i, j)
+            If Not IsNull(v) And Not IsEmptyLike(v) Then
+                If IsDate(v) Then
+                    nDate = nDate + 1
+                ElseIf IsNumeric(v) Then
+                    nNum = nNum + 1
+                Else
+                    s = Trim$(CStr(v))
+                    If Len(s) > 0 Then
+                        If IsDate(s) Then
+                            nDate = nDate + 1
+                        ElseIf IsNumeric(s) Then
+                            nNum = nNum + 1
+                        Else
+                            nTxt = nTxt + 1
+                        End If
+                    End If
+                End If
+            End If
+        Next i
+
+        If nNum >= nDate And nNum >= nTxt Then
+            types(j) = "number"
+        ElseIf nDate >= nNum And nDate >= nTxt Then
+            types(j) = "date"
+        Else
+            types(j) = "text"
+        End If
+    Next j
+
+    out.mHeader = Arr_To1D1(mHeader)
+    out.mData = mData
+    out.mNullToken = mNullToken
+    out.mDebug = mDebug
+    out.mTypes = types
+    out.mMetrics("infer_types_cols") = ColsCount
+    out.G_EnsureDataHeaderAgree "DataFrame.InferTypes"
+
     Set InferTypes = out
 End Function
 
@@ -1095,19 +1394,26 @@ End Function
 '  TODO[DF:IO]: decidere formato (array 2D, dizionario serializzato, ecc.)
 Public Function Metrics() As Variant
     Dim out As Variant
-    Dim i As Long, n As Long
+    Dim n As Long, i As Long
+
+    If mMetrics Is Nothing Or mMetrics.Count = 0 Then
+        ReDim out(1 To 1, 1 To 2)
+        out(1, 1) = "info"
+        out(1, 2) = "no_metrics"
+        Metrics = out
+        Exit Function
+    End If
 
     n = mMetrics.Count
     ReDim out(1 To n, 1 To 2)
 
-    Dim keysV As Variant, itemsV As Variant
-    keysV = mMetrics.Keys
-    itemsV = mMetrics.Items
-
+    Dim keys As Variant
+    keys = mMetrics.Keys
     For i = 1 To n
-        out(i, 1) = keysV(i - 1)
-        out(i, 2) = itemsV(i - 1)
+        out(i, 1) = CStr(keys(i - 1))
+        out(i, 2) = mMetrics(keys(i - 1))
     Next i
+
     Metrics = out
 End Function
 
@@ -1387,6 +1693,321 @@ Private Function FindLastNonEmptyRow(ByRef a As Variant, ByVal skipHeader As Boo
         Next j
     Next i
     FindLastNonEmptyRow = 0
+End Function
+
+Private Sub ParseCondition(ByVal condition As String, ByRef colIdx As Long, ByRef op As String, ByRef rhs As String)
+    Dim txt As String
+    txt = Trim$(condition)
+    If Len(txt) = 0 Then
+        RaiseDf "DataFrame.Filter", edfInvalidData, "Condition vuota."
+    End If
+
+    Dim p As Long, lhs As String
+
+    p = InStr(1, LCase$(txt), " contains ", vbTextCompare)
+    If p > 0 Then
+        lhs = Trim$(Left$(txt, p - 1))
+        rhs = Trim$(Mid$(txt, p + Len(" contains ")))
+        op = "contains"
+    Else
+        p = InStr(1, txt, "<>", vbBinaryCompare)
+        If p > 0 Then
+            lhs = Trim$(Left$(txt, p - 1))
+            rhs = Trim$(Mid$(txt, p + 2))
+            op = "<>"
+        Else
+            p = InStr(1, txt, "=", vbBinaryCompare)
+            If p > 0 Then
+                lhs = Trim$(Left$(txt, p - 1))
+                rhs = Trim$(Mid$(txt, p + 1))
+                op = "="
+            Else
+                p = InStr(1, txt, ">", vbBinaryCompare)
+                If p > 0 Then
+                    lhs = Trim$(Left$(txt, p - 1))
+                    rhs = Trim$(Mid$(txt, p + 1))
+                    op = ">"
+                Else
+                    p = InStr(1, txt, "<", vbBinaryCompare)
+                    If p > 0 Then
+                        lhs = Trim$(Left$(txt, p - 1))
+                        rhs = Trim$(Mid$(txt, p + 1))
+                        op = "<"
+                    End If
+                End If
+            End If
+        End If
+    End If
+
+    If Len(op) = 0 Then
+        RaiseDf "DataFrame.Filter", edfInvalidData, "Operatore non supportato nella condition: " & condition
+    End If
+
+    lhs = TrimQuotes(lhs)
+    rhs = TrimQuotes(rhs)
+    colIdx = Hdr_FindIndexByName(lhs, mHeader, mAliasMap)
+End Sub
+
+Private Function TrimQuotes(ByVal s As String) As String
+    s = Trim$(s)
+    If Len(s) >= 2 Then
+        If (Left$(s, 1) = """ And Right$(s, 1) = """) Or (Left$(s, 1) = "'" And Right$(s, 1) = "'") Then
+            s = Mid$(s, 2, Len(s) - 2)
+        End If
+    End If
+    TrimQuotes = s
+End Function
+
+Private Function EvalCondition(ByVal lhs As Variant, ByVal op As String, ByVal rhs As String) As Boolean
+    Dim ltxt As String
+    ltxt = CStr(lhs)
+
+    Select Case LCase$(op)
+        Case "contains"
+            EvalCondition = (InStr(1, LCase$(ltxt), LCase$(rhs), vbTextCompare) > 0)
+        Case "="
+            EvalCondition = (CompareVariant(lhs, ParseLiteral(rhs)) = 0)
+        Case "<>"
+            EvalCondition = (CompareVariant(lhs, ParseLiteral(rhs)) <> 0)
+        Case ">"
+            EvalCondition = (CompareVariant(lhs, ParseLiteral(rhs)) > 0)
+        Case "<"
+            EvalCondition = (CompareVariant(lhs, ParseLiteral(rhs)) < 0)
+        Case Else
+            RaiseDf "DataFrame.Filter", edfInvalidData, "Operatore non supportato: " & op
+    End Select
+End Function
+
+Private Function ParseLiteral(ByVal s As String) As Variant
+    Dim t As String
+    t = TrimQuotes(Trim$(s))
+
+    If Len(t) = 0 Then
+        ParseLiteral = vbNullString
+    ElseIf LCase$(t) = "null" Then
+        ParseLiteral = Null
+    ElseIf IsDate(t) Then
+        ParseLiteral = CDate(t)
+    ElseIf IsNumeric(t) Then
+        ParseLiteral = CDbl(t)
+    Else
+        ParseLiteral = t
+    End If
+End Function
+
+Private Function ParseSortDirections(ByVal ascending As String, ByVal nCols As Long) As Boolean()
+    Dim out() As Boolean
+    ReDim out(1 To nCols)
+
+    Dim i As Long
+    For i = 1 To nCols
+        out(i) = True
+    Next i
+
+    Dim parts() As String
+    Dim p As String
+    ascending = Trim$(ascending)
+    If Len(ascending) = 0 Then
+        ParseSortDirections = out
+        Exit Function
+    End If
+
+    parts = Split(ascending, ",")
+    For i = 1 To nCols
+        If i - 1 <= UBound(parts) Then
+            p = LCase$(Trim$(parts(i - 1)))
+            If p = "desc" Or p = "false" Or p = "0" Then
+                out(i) = False
+            ElseIf p = "asc" Or p = "true" Or p = "1" Or p = "" Then
+                out(i) = True
+            Else
+                RaiseDf "DataFrame.Sort", edfInvalidData, "Direzione non valida: " & p
+            End If
+        End If
+    Next i
+
+    ParseSortDirections = out
+End Function
+
+Private Function CompareRowsByCols(ByVal rowA As Long, ByVal rowB As Long, ByRef idx() As Long, ByRef asc() As Boolean) As Long
+    Dim k As Long, c As Long, cmp As Long
+    For k = LBound(idx) To UBound(idx)
+        c = idx(k)
+        cmp = CompareVariant(mData(rowA, c), mData(rowB, c))
+        If cmp <> 0 Then
+            If asc(k - LBound(idx) + 1) Then
+                CompareRowsByCols = cmp
+            Else
+                CompareRowsByCols = -cmp
+            End If
+            Exit Function
+        End If
+    Next k
+    CompareRowsByCols = 0
+End Function
+
+Private Function CompareVariant(ByVal a As Variant, ByVal b As Variant) As Long
+    On Error GoTo FallbackText
+
+    If IsNull(a) And IsNull(b) Then
+        CompareVariant = 0
+        Exit Function
+    ElseIf IsNull(a) Then
+        CompareVariant = -1
+        Exit Function
+    ElseIf IsNull(b) Then
+        CompareVariant = 1
+        Exit Function
+    End If
+
+    If IsEmptyLike(a) And IsEmptyLike(b) Then
+        CompareVariant = 0
+    ElseIf IsEmptyLike(a) Then
+        CompareVariant = -1
+    ElseIf IsEmptyLike(b) Then
+        CompareVariant = 1
+    ElseIf IsDate(a) And IsDate(b) Then
+        If CDate(a) < CDate(b) Then
+            CompareVariant = -1
+        ElseIf CDate(a) > CDate(b) Then
+            CompareVariant = 1
+        Else
+            CompareVariant = 0
+        End If
+    ElseIf IsNumeric(a) And IsNumeric(b) Then
+        If CDbl(a) < CDbl(b) Then
+            CompareVariant = -1
+        ElseIf CDbl(a) > CDbl(b) Then
+            CompareVariant = 1
+        Else
+            CompareVariant = 0
+        End If
+    Else
+        GoTo FallbackText
+    End If
+    Exit Function
+
+FallbackText:
+    Dim sa As String, sb As String
+    sa = LCase$(CStr(a)): sb = LCase$(CStr(b))
+    If sa < sb Then
+        CompareVariant = -1
+    ElseIf sa > sb Then
+        CompareVariant = 1
+    Else
+        CompareVariant = 0
+    End If
+End Function
+
+Private Function BuildRowKey(ByRef data As Variant, ByVal r As Long, ByRef keyIdx() As Long) As String
+    Dim i As Long, c As Long
+    Dim sb As String
+    sb = vbNullString
+    For i = LBound(keyIdx) To UBound(keyIdx)
+        c = keyIdx(i)
+        sb = sb & "|" & CanonicalValue(data(r, c))
+    Next i
+    BuildRowKey = sb
+End Function
+
+Private Function CanonicalValue(ByVal v As Variant) As String
+    If IsNull(v) Then
+        CanonicalValue = "<NULL>"
+    ElseIf IsEmptyLike(v) Then
+        CanonicalValue = "<EMPTY>"
+    ElseIf IsDate(v) Then
+        CanonicalValue = "<DATE>" & Format$(CDate(v), "yyyy-mm-dd hh:nn:ss")
+    ElseIf IsNumeric(v) Then
+        CanonicalValue = "<NUM>" & Replace$(CStr(CDbl(v)), ",", ".")
+    Else
+        CanonicalValue = "<TXT>" & LCase$(Trim$(CStr(v)))
+    End If
+End Function
+
+Private Function BuildNonKeyIndex(ByVal totalCols As Long, ByRef keyIdx() As Long) As Long()
+    Dim isKey() As Boolean
+    ReDim isKey(1 To totalCols)
+
+    Dim i As Long
+    For i = LBound(keyIdx) To UBound(keyIdx)
+        isKey(keyIdx(i)) = True
+    Next i
+
+    Dim cnt As Long
+    For i = 1 To totalCols
+        If Not isKey(i) Then cnt = cnt + 1
+    Next i
+
+    Dim out() As Long
+    If cnt = 0 Then
+        BuildNonKeyIndex = out
+        Exit Function
+    End If
+
+    ReDim out(1 To cnt)
+    cnt = 0
+    For i = 1 To totalCols
+        If Not isKey(i) Then
+            cnt = cnt + 1
+            out(cnt) = i
+        End If
+    Next i
+
+    BuildNonKeyIndex = out
+End Function
+
+Private Function HeaderContains(ByRef hdr As Variant, ByVal name As String, ByVal maxIdx As Long) As Boolean
+    Dim i As Long
+    For i = 1 To maxIdx
+        If LCase$(CStr(hdr(i))) = LCase$(name) Then
+            HeaderContains = True
+            Exit Function
+        End If
+    Next i
+End Function
+
+Private Function ParseSuffixRight(ByVal suffixes As String) As String
+    Dim parts() As String
+    parts = Split(CStr(suffixes), ",")
+    If UBound(parts) >= 1 Then
+        ParseSuffixRight = Trim$(parts(1))
+    Else
+        ParseSuffixRight = "_R"
+    End If
+    If Len(ParseSuffixRight) = 0 Then ParseSuffixRight = "_R"
+End Function
+
+Private Function CleanValue(ByVal v As Variant, ByVal doTrim As Boolean, ByVal doCollapse As Boolean, ByVal doCoerce As Boolean) As Variant
+    If IsNull(v) Then
+        CleanValue = Empty
+        Exit Function
+    End If
+
+    If VarType(v) = vbString Then
+        Dim s As String
+        s = CStr(v)
+        If doTrim Then s = Trim$(s)
+        If doCollapse Then s = CollapseSpaces(s)
+
+        Select Case LCase$(s)
+            Case "", "na", "n/a", "null", "-", "none"
+                CleanValue = Empty
+                Exit Function
+        End Select
+
+        If doCoerce Then
+            If IsDate(s) Then
+                CleanValue = CDate(s)
+                Exit Function
+            ElseIf IsNumeric(s) Then
+                CleanValue = CDbl(s)
+                Exit Function
+            End If
+        End If
+        CleanValue = s
+    Else
+        CleanValue = v
+    End If
 End Function
 
 '@Description "Header da prima riga (1D 1-based)"
