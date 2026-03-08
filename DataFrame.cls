@@ -686,12 +686,7 @@ Public Function Filter(ByVal condition As String) As DataFrame
         End If
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = mTypes
-    out.G_EnsureDataHeaderAgree "DataFrame.Filter"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Filter = out
 End Function
@@ -741,12 +736,7 @@ Public Function Sort(ByVal cols As String, Optional ByVal ascending As String = 
         Next k
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = mTypes
-    out.G_EnsureDataHeaderAgree "DataFrame.Sort"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Sort = out
 End Function
@@ -822,12 +812,7 @@ Public Function Dedup(Optional ByVal policy As String = "keep_first") As DataFra
         End If
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = mTypes
-    out.G_EnsureDataHeaderAgree "DataFrame.Dedup"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Dedup = out
 End Function
@@ -1135,11 +1120,7 @@ Public Function JoinRight(ByVal right As DataFrame, ByVal Keys As String, _
         outData = trimmed
     End If
 
-    out.mHeader = outHeader
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.JoinRight"
+    Set out = NewFrameFromParts(outData, outHeader)
 
     Set JoinRight = out
 End Function
@@ -1165,11 +1146,7 @@ Public Function Clean(Optional ByVal trimSpaces As Boolean = True, _
         Next j
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.Clean"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Clean = out
 End Function
@@ -1223,13 +1200,7 @@ Public Function InferTypes() As DataFrame
         End If
     Next j
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = mData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = types
-    out.mMetrics("infer_types_cols") = ColsCount
-    out.G_EnsureDataHeaderAgree "DataFrame.InferTypes"
+    Set out = NewFrameFromParts(mData, Arr_To1D1(mHeader))
 
     Set InferTypes = out
 End Function
