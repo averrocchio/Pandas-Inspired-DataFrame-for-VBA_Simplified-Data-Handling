@@ -30,7 +30,7 @@ Private mKeys As Variant            ' Array 1D di indici colonna (opz.)
 Private mNullToken As String        ' Es. "", "-", "NA"
 Private mAliasMap As Object         ' Dictionary (incapsulato)
 Private mTypes As Variant           ' Array 1D con tipo per colonna (opz.)
-Private mMetrics As Object          ' Dictionary pAer metriche
+Private mMetrics As Object          ' Dictionary per metriche
 Private mDebug As Boolean
 
 ' ====== Errori & utilità (privati) ==========================================
@@ -85,12 +85,20 @@ End Sub
 '==============================================================================
 '' @Description: Restituisce il numero di righe (0 se mData non è inizializzato)"
 Public Property Get RowsCount() As Long
-    If IsArray(mData) Then RowsCount = UBound(mData, 1) - LBound(mData, 1) + 1
+    If IsArray(mData) Then
+        RowsCount = UBound(mData, 1) - LBound(mData, 1) + 1
+    Else
+        RowsCount = 0
+    End If
 End Property
 
 '@Description "Restituisce il numero di colonne (0 se mData non è inizializzato)"
 Public Property Get ColsCount() As Long
-    If IsArray(mData) Then ColsCount = UBound(mData, 2) - LBound(mData, 2) + 1
+    If IsArray(mData) Then
+        ColsCount = UBound(mData, 2) - LBound(mData, 2) + 1
+    Else
+        ColsCount = 0
+    End If
 End Property
 
 '@Description "Forma R×C in stringa (es. "12×5")"
@@ -134,7 +142,9 @@ End Property
 
 '@Description "Chiavi come array 1D di indici (1-based)"
 Public Property Get Keys() As Variant
-    Keys = mKeys  ' restituisce riferimento (accettabile per ora)
+    If IsArray(mKeys) Then
+        Keys = mKeys
+    End If
 End Property
 
 '@Description "Imposta le chiavi da stringa "A,B" o array di nomi/indici"
@@ -659,7 +669,11 @@ Public Function Filter(ByVal condition As String) As DataFrame
     Next i
 
     Dim outData As Variant
-    ReDim outData(1 To kept, 1 To ColsCount)
+    If kept = 0 Then
+        ReDim outData(1 To 0, 1 To ColsCount)
+    Else
+        ReDim outData(1 To kept, 1 To ColsCount)
+    End If
 
     Dim rOut As Long, j As Long
     rOut = 0
@@ -672,12 +686,7 @@ Public Function Filter(ByVal condition As String) As DataFrame
         End If
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = mTypes
-    out.G_EnsureDataHeaderAgree "DataFrame.Filter"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Filter = out
 End Function
@@ -727,12 +736,7 @@ Public Function Sort(ByVal cols As String, Optional ByVal ascending As String = 
         Next k
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = mTypes
-    out.G_EnsureDataHeaderAgree "DataFrame.Sort"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Sort = out
 End Function
@@ -808,12 +812,7 @@ Public Function Dedup(Optional ByVal policy As String = "keep_first") As DataFra
         End If
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = mTypes
-    out.G_EnsureDataHeaderAgree "DataFrame.Dedup"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Dedup = out
 End Function
@@ -1121,11 +1120,7 @@ Public Function JoinRight(ByVal right As DataFrame, ByVal Keys As String, _
         outData = trimmed
     End If
 
-    out.mHeader = outHeader
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.JoinRight"
+    Set out = NewFrameFromParts(outData, outHeader)
 
     Set JoinRight = out
 End Function
@@ -1151,11 +1146,7 @@ Public Function Clean(Optional ByVal trimSpaces As Boolean = True, _
         Next j
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.Clean"
+    Set out = NewFrameFromParts(outData, Arr_To1D1(mHeader))
 
     Set Clean = out
 End Function
@@ -1209,13 +1200,7 @@ Public Function InferTypes() As DataFrame
         End If
     Next j
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = mData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.mTypes = types
-    out.mMetrics("infer_types_cols") = ColsCount
-    out.G_EnsureDataHeaderAgree "DataFrame.InferTypes"
+    Set out = NewFrameFromParts(mData, Arr_To1D1(mHeader))
 
     Set InferTypes = out
 End Function
@@ -1591,19 +1576,12 @@ End Function
 '==================== Helpers privati per LoadFromRange ====================
 
 '@Description "Risoluzione orientamento header: 'row'|'col'|'auto' ? 'row' di default salvo 1xN/Nx1"
-Private Function ResolveHeaderAt(ByVal headerAt As String, ByVal rows As Long, ByVal cols As Long) As String
-    Dim ha As String: ha = LCase$(Trim$(headerAt))
-    Select Case ha
-        Case "row", "col"
-            ResolveHeaderAt = ha
-        Case "auto"
-            If rows = 1 And cols >= 1 Then
-                ResolveHeaderAt = "row"
-            ElseIf cols = 1 And rows >= 1 Then
-                ResolveHeaderAt = "col"
-            Else
-                ResolveHeaderAt = "row" ' convenzione
-            End If
+Private Function ResolveHeaderAt(ByVal headerAt As DFHeaderAt, ByVal rows As Long, ByVal cols As Long) As String
+    Select Case headerAt
+        Case dfRow
+            ResolveHeaderAt = "row"
+        Case dfColumn
+            ResolveHeaderAt = "col"
         Case Else
             ResolveHeaderAt = "row"
     End Select
@@ -1790,40 +1768,6 @@ Private Function ParseLiteral(ByVal s As String) As Variant
     Else
         ParseLiteral = t
     End If
-End Function
-
-Private Function ParseSortDirections(ByVal ascending As String, ByVal nCols As Long) As Boolean()
-    Dim out() As Boolean
-    ReDim out(1 To nCols)
-
-    Dim i As Long
-    For i = 1 To nCols
-        out(i) = True
-    Next i
-
-    Dim parts() As String
-    Dim p As String
-    ascending = Trim$(ascending)
-    If Len(ascending) = 0 Then
-        ParseSortDirections = out
-        Exit Function
-    End If
-
-    parts = Split(ascending, ",")
-    For i = 1 To nCols
-        If i - 1 <= UBound(parts) Then
-            p = LCase$(Trim$(parts(i - 1)))
-            If p = "desc" Or p = "false" Or p = "0" Then
-                out(i) = False
-            ElseIf p = "asc" Or p = "true" Or p = "1" Or p = "" Then
-                out(i) = True
-            Else
-                RaiseDf "DataFrame.Sort", edfInvalidData, "Direzione non valida: " & p
-            End If
-        End If
-    Next i
-
-    ParseSortDirections = out
 End Function
 
 Private Function CompareRowsByCols(ByVal rowA As Long, ByVal rowB As Long, ByRef idx() As Long, ByRef asc() As Boolean) As Long
