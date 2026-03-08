@@ -112,15 +112,16 @@ End Sub
 - `AppendTo` and `WriteToListObject` are still TODO.
 - `Project` rejects duplicated column specifications (e.g. `"name,name"`).
 - `Rename` currently supports mapping via string (`"old:new"`) or `Scripting.Dictionary`.
-- `Append` requires schema compatibility by header name; missing columns raise an explicit error.
-- `Filter`, `Sort`, `Dedup`, `JoinRight`, `Clean`, `InferTypes` are still stubs.
+- `Append` esegue unione schema per nome colonna: mantiene l'ordine della tabella sinistra e aggiunge eventuali colonne extra della destra, riempiendo i mancanti con stringa vuota.
+- `Filter`, `Dedup`, `JoinRight`, `Clean`, `InferTypes` are still stubs.
 
 ## Manual test module
 A repeatable manual test module is included in `DataFrameTests.bas` with these entry points:
 - `Test_LoadFromArray_Basic`
 - `Test_LoadFromRange_WithHeader`
 - `Test_Project_And_Rename`
-- `Test_Append_SchemaMismatch_ShouldFail`
+- `Test_Append_HeaderUnion`
+- `Test_Sort_MultiColumn`
 - `Test_Filter_Contains`
 - `Test_Dedup_ByKeys`
 - `Test_Sort_MultiColumn`

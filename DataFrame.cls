@@ -852,11 +852,7 @@ Public Function Project(ByVal cols As String) As DataFrame
         Next i
     Next j
 
-    out.mHeader = outHeader
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.Project"
+    Set out = NewFrameFromParts(outData, outHeader)
 
     Set Project = out
 End Function
@@ -908,68 +904,108 @@ ContinueLoop:
 
     outHeader = Hdr_EnsureUnique1D(outHeader)
 
-    out.mHeader = outHeader
-    out.mData = mData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.Rename"
+    Dim dataCopy As Variant
+    dataCopy = mData
+    Set out = NewFrameFromParts(dataCopy, outHeader)
 
     Set Rename = out
 End Function
 
-'@Description "Append di righe allineando per nome"
+'@Description "Append di righe con unione schema per nome colonna"
 Public Function Append(ByVal rows As DataFrame) As DataFrame
     ' Mini-spec:
     ' 1) Appende le righe di un secondo DataFrame allineando le colonne per nome.
-    ' 2) Richiede corrispondenza 1:1 degli header tra sorgente e input rows.
-    ' 3) Preserva l'ordine colonne dell'istanza corrente (left schema).
-    ' 4) Copia in memoria in blocco su nuovo array 2D 1-based.
-    ' 5) Solleva errore esplicito su schema mismatch o input non valido.
+    ' 2) Lo schema risultato è l'unione: colonne sinistra + nuove colonne di destra.
+    ' 3) Le colonne mancanti su un lato vengono valorizzate a vbNullString.
+    ' 4) Preserva l'ordine colonne della sinistra, poi aggiunge le colonne extra della destra.
+    ' 5) Copia in memoria in blocco su nuovo array 2D 1-based.
     Dim out As New DataFrame
     If rows Is Nothing Then
         RaiseDf "DataFrame.Append", edfInvalidData, "DataFrame da appendere non valido (Nothing)."
     End If
 
     G_EnsureDataHeaderAgree "DataFrame.Append"
-    If (Not IsArray(rows.mData)) Or (Not IsArray(rows.mHeader)) Then
+
+    Dim rightData As Variant
+    Dim rightHeader As Variant
+    rightData = rows.AsArray
+    rightHeader = rows.header
+
+    If (Not IsArray(rightData)) Or (Not IsArray(rightHeader)) Then
         RaiseDf "DataFrame.Append", edfInvalidData, "DataFrame da appendere non inizializzato."
     End If
 
-    If rows.ColsCount <> ColsCount Then
-        RaiseDf "DataFrame.Append", edfHeaderKeysMismatch, "Numero colonne non coerente tra DataFrame."
-    End If
+    Dim leftMap As Object, rightMap As Object
+    Set leftMap = HeaderIndexMap(mHeader)
+    Set rightMap = HeaderIndexMap(rightHeader)
 
-    Dim c As Long, i As Long, j As Long
-    Dim rightIdx() As Long
-    ReDim rightIdx(1 To ColsCount)
+    Dim outCols As Long
+    outCols = ColsCount
 
-    For c = 1 To ColsCount
-        rightIdx(c) = Hdr_FindIndexByName(CStr(mHeader(c)), rows.mHeader, rows.mAliasMap)
-    Next c
+    Dim j As Long
+    For j = 1 To rows.ColsCount
+        If Not leftMap.Exists(LCase$(CStr(rightHeader(j)))) Then
+            outCols = outCols + 1
+        End If
+    Next j
+
+    Dim outHeader As Variant
+    ReDim outHeader(1 To outCols)
+
+    Dim outColMap As Object
+    Set outColMap = CreateObject("Scripting.Dictionary")
+
+    For j = 1 To ColsCount
+        outHeader(j) = mHeader(j)
+        outColMap(LCase$(CStr(mHeader(j)))) = j
+    Next j
+
+    Dim wCol As Long
+    wCol = ColsCount
+    For j = 1 To rows.ColsCount
+        Dim k As String
+        k = LCase$(CStr(rightHeader(j)))
+        If Not outColMap.Exists(k) Then
+            wCol = wCol + 1
+            outHeader(wCol) = rightHeader(j)
+            outColMap(k) = wCol
+        End If
+    Next j
 
     Dim outRows As Long
     outRows = RowsCount + rows.RowsCount
 
     Dim outData As Variant
-    ReDim outData(1 To outRows, 1 To ColsCount)
+    ReDim outData(1 To outRows, 1 To outCols)
 
+    Dim i As Long
+    Dim srcCol As Long
+
+    ' Righe sinistra
     For i = 1 To RowsCount
-        For j = 1 To ColsCount
-            outData(i, j) = mData(i, j)
+        For j = 1 To outCols
+            srcCol = HeaderIndexOrZero(leftMap, CStr(outHeader(j)))
+            If srcCol > 0 Then
+                outData(i, j) = mData(i, srcCol)
+            Else
+                outData(i, j) = vbNullString
+            End If
         Next j
     Next i
 
+    ' Righe destra
     For i = 1 To rows.RowsCount
-        For j = 1 To ColsCount
-            outData(RowsCount + i, j) = rows.mData(i, rightIdx(j))
+        For j = 1 To outCols
+            srcCol = HeaderIndexOrZero(rightMap, CStr(outHeader(j)))
+            If srcCol > 0 Then
+                outData(RowsCount + i, j) = rightData(i, srcCol)
+            Else
+                outData(RowsCount + i, j) = vbNullString
+            End If
         Next j
     Next i
 
-    out.mHeader = Arr_To1D1(mHeader)
-    out.mData = outData
-    out.mNullToken = mNullToken
-    out.mDebug = mDebug
-    out.G_EnsureDataHeaderAgree "DataFrame.Append"
+    Set out = NewFrameFromParts(outData, outHeader)
 
     Set Append = out
 End Function
@@ -1196,7 +1232,57 @@ End Function
 '@Description "Scrive su ListObject (replace body; opz. aggiorna header)"
 '  TODO[DF:IO]: full replace DataBodyRange con mData, gestione header
 Public Function WriteToListObject(ByVal lo As ListObject) As Long
-    ' TODO: ritorna righe scritte
+    On Error GoTo EH
+
+    If lo Is Nothing Then
+        RaiseDf "DataFrame.WriteToListObject", edfInvalidData, "ListObject non valido (Nothing)."
+    End If
+    G_EnsureDataHeaderAgree "DataFrame.WriteToListObject"
+    If lo.ListColumns.Count <> ColsCount Then
+        RaiseDf "DataFrame.WriteToListObject", edfHeaderKeysMismatch, "Numero colonne ListObject non coerente con DataFrame."
+    End If
+
+    Dim i As Long
+    For i = 1 To ColsCount
+        lo.ListColumns(i).Name = CStr(mHeader(i))
+    Next i
+
+    Dim t0 As Double: t0 = Timer
+
+    Dim oldCalc As XlCalculation
+    Dim oldScrUpd As Boolean, oldEvents As Boolean
+    oldCalc = Application.Calculation
+    oldScrUpd = Application.ScreenUpdating
+    oldEvents = Application.EnableEvents
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    Dim anchor As Range
+    Set anchor = lo.Range.Cells(1, 1)
+
+    lo.Resize anchor.Resize(RowsCount + 1, ColsCount)
+    If RowsCount > 0 Then
+        lo.DataBodyRange.Value2 = BuildDataOutArray()
+    End If
+
+    Dim dt As Double: dt = Timer - t0
+    If dt < 0# Then dt = dt + 24# * 3600#
+    mMetrics("write_ms") = CLng(dt * 1000#)
+    mMetrics("write_addr") = lo.Range.Address(0, 0)
+    mMetrics("write_rows") = RowsCount
+    mMetrics("write_cols") = ColsCount
+
+    WriteToListObject = RowsCount
+    GoTo CLEANUP
+
+EH:
+    RaiseDf "DataFrame.WriteToListObject", edfRuntimeError, "Errore di scrittura su tabella: " & Err.Number & " - " & Err.Description
+
+CLEANUP:
+    Application.ScreenUpdating = oldScrUpd
+    Application.EnableEvents = oldEvents
+    Application.Calculation = oldCalc
 End Function
 
 '@Description "Scrive header + dati partendo SEMPRE da rng.Cells(1,1)."
@@ -1296,7 +1382,12 @@ End Function
 '@Description "Appende righe a ListObject"
 '  TODO[DF:IO]: append in coda
 Public Function AppendTo(ByVal lo As ListObject) As Long
-    ' TODO
+    Dim base As New DataFrame
+    Dim merged As DataFrame
+
+    base.LoadFromListObject lo
+    Set merged = base.Append(Me)
+    AppendTo = merged.WriteToListObject(lo)
 End Function
 
 '@Description "Espone metriche come Variant (copia)"
@@ -1350,6 +1441,131 @@ Private Function CollapseSpaces(ByVal s As String) As String
     Loop
     CollapseSpaces = s
 End Function
+
+'@Description "Materializza mData in array 2D sostituendo empty/nullstring con NullToken"
+Private Function BuildDataOutArray() As Variant
+    Dim out As Variant
+    Dim i As Long, j As Long
+    ReDim out(1 To RowsCount, 1 To ColsCount)
+    For i = 1 To RowsCount
+        For j = 1 To ColsCount
+            If IsEmpty(mData(i, j)) Or mData(i, j) = vbNullString Then
+                out(i, j) = mNullToken
+            Else
+                out(i, j) = mData(i, j)
+            End If
+        Next j
+    Next i
+    BuildDataOutArray = out
+End Function
+
+'@Description "Parsing direzioni sort: 'asc,desc' (default asc)"
+Private Function ParseSortDirections(ByVal spec As String, ByVal nCols As Long) As Boolean()
+    Dim dirs() As Boolean
+    Dim i As Long
+    ReDim dirs(1 To nCols)
+
+    If Len(Trim$(spec)) = 0 Then
+        For i = 1 To nCols: dirs(i) = True: Next i
+        ParseSortDirections = dirs
+        Exit Function
+    End If
+
+    Dim parts() As String
+    parts = Split(spec, ",")
+
+    If UBound(parts) - LBound(parts) + 1 = 1 Then
+        Dim oneDir As Boolean
+        oneDir = ParseOneDirection(CStr(parts(LBound(parts))), 1)
+        For i = 1 To nCols: dirs(i) = oneDir: Next i
+    ElseIf UBound(parts) - LBound(parts) + 1 = nCols Then
+        For i = 1 To nCols
+            dirs(i) = ParseOneDirection(CStr(parts(LBound(parts) + i - 1)), i)
+        Next i
+    Else
+        RaiseDf "DataFrame.Sort", edfInvalidData, "Parametro 'ascending' deve avere 1 valore o uno per ogni colonna di sort."
+    End If
+
+    ParseSortDirections = dirs
+End Function
+
+Private Function ParseOneDirection(ByVal token As String, ByVal pos As Long) As Boolean
+    Dim t As String
+    t = LCase$(Trim$(token))
+    Select Case t
+        Case "", "asc", "ascending", "1", "true"
+            ParseOneDirection = True
+        Case "desc", "descending", "0", "false"
+            ParseOneDirection = False
+        Case Else
+            RaiseDf "DataFrame.Sort", edfInvalidData, "Direzione sort non valida in posizione " & CStr(pos) & ": '" & token & "'."
+    End Select
+End Function
+
+'@Description "Confronta due righe seguendo la specifica di sort"
+Private Function CompareRowsBySpec(ByVal rowA As Long, ByVal rowB As Long, _
+                                   ByRef idx() As Long, ByRef dirs() As Boolean) As Long
+    Dim k As Long, col As Long, cmp As Long
+    For k = LBound(idx) To UBound(idx)
+        col = idx(k)
+        cmp = CompareValues(mData(rowA, col), mData(rowB, col))
+        If cmp <> 0 Then
+            If dirs(k - LBound(idx) + 1) Then
+                CompareRowsBySpec = cmp
+            Else
+                CompareRowsBySpec = -cmp
+            End If
+            Exit Function
+        End If
+    Next k
+    CompareRowsBySpec = 0
+End Function
+
+'@Description "Confronto base Variant: Empty/Null minori; numeri e date per valore; fallback lessicografico"
+Private Function CompareValues(ByVal a As Variant, ByVal b As Variant) As Long
+    If IsNull(a) And IsNull(b) Then CompareValues = 0: Exit Function
+    If IsNull(a) Then CompareValues = -1: Exit Function
+    If IsNull(b) Then CompareValues = 1: Exit Function
+
+    If IsEmpty(a) And IsEmpty(b) Then CompareValues = 0: Exit Function
+    If IsEmpty(a) Then CompareValues = -1: Exit Function
+    If IsEmpty(b) Then CompareValues = 1: Exit Function
+
+    If IsDate(a) And IsDate(b) Then
+        If CDbl(CDate(a)) < CDbl(CDate(b)) Then
+            CompareValues = -1
+        ElseIf CDbl(CDate(a)) > CDbl(CDate(b)) Then
+            CompareValues = 1
+        Else
+            CompareValues = 0
+        End If
+        Exit Function
+    End If
+
+    If IsNumeric(a) And IsNumeric(b) Then
+        If CDbl(a) < CDbl(b) Then
+            CompareValues = -1
+        ElseIf CDbl(a) > CDbl(b) Then
+            CompareValues = 1
+        Else
+            CompareValues = 0
+        End If
+        Exit Function
+    End If
+
+    Dim sa As String, sb As String
+    sa = CStr(a): sb = CStr(b)
+    If StrComp(sa, sb, vbTextCompare) < 0 Then
+        CompareValues = -1
+    ElseIf StrComp(sa, sb, vbTextCompare) > 0 Then
+        CompareValues = 1
+    Else
+        CompareValues = 0
+    End If
+End Function
+
+
+
 
 
 '@Description "Rende unici i nomi header (case-insensitive) aggiungendo suffissi _2, _3, ..."
@@ -1993,5 +2209,34 @@ End Sub
 
 '=== Fine Helpers ==============================================================
 
+
+Private Function NewFrameFromParts(ByRef data As Variant, ByRef header As Variant) As DataFrame
+    Dim out As New DataFrame
+    out.LoadFromArray data, header
+    out.NullToken = mNullToken
+    out.DebugMode = mDebug
+    Set NewFrameFromParts = out
+End Function
+
+Private Function HeaderIndexMap(ByRef hdr As Variant) As Object
+    Dim m As Object
+    Set m = CreateObject("Scripting.Dictionary")
+    Dim i As Long, k As String
+    For i = LBound(hdr) To UBound(hdr)
+        k = LCase$(CStr(hdr(i)))
+        If Not m.Exists(k) Then m(k) = i
+    Next i
+    Set HeaderIndexMap = m
+End Function
+
+Private Function HeaderIndexOrZero(ByVal map As Object, ByVal nameSpec As String) As Long
+    Dim k As String
+    k = LCase$(CStr(nameSpec))
+    If map.Exists(k) Then
+        HeaderIndexOrZero = CLng(map(k))
+    Else
+        HeaderIndexOrZero = 0
+    End If
+End Function
 
 
