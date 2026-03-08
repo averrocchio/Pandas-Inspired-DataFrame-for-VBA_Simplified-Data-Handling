@@ -1230,7 +1230,6 @@ Public Function AsArray() As Variant
 End Function
 
 '@Description "Scrive su ListObject (replace body; opz. aggiorna header)"
-'  TODO[DF:IO]: full replace DataBodyRange con mData, gestione header
 Public Function WriteToListObject(ByVal lo As ListObject) As Long
     On Error GoTo EH
 
@@ -1380,7 +1379,6 @@ End Function
 
 
 '@Description "Appende righe a ListObject"
-'  TODO[DF:IO]: append in coda
 Public Function AppendTo(ByVal lo As ListObject) As Long
     Dim base As New DataFrame
     Dim merged As DataFrame
@@ -1391,7 +1389,6 @@ Public Function AppendTo(ByVal lo As ListObject) As Long
 End Function
 
 '@Description "Espone metriche come Variant (copia)"
-'  TODO[DF:IO]: decidere formato (array 2D, dizionario serializzato, ecc.)
 Public Function Metrics() As Variant
     Dim out As Variant
     Dim n As Long, i As Long
