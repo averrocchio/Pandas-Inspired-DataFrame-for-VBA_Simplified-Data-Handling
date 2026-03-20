@@ -1127,7 +1127,7 @@ End Function
 
 '@Description "Pulizia base (trim/collapse/coercioni leggere)"
 Public Function Clean(Optional ByVal trimSpaces As Boolean = True, _
-                      Optional ByVal CollapseSpaces As Boolean = True, _
+                      Optional ByVal doCollapse As Boolean = True, _
                       Optional ByVal softCoerce As Boolean = True) As DataFrame
     ' Mini-spec:
     ' 1) Normalizza stringhe (trim/collapse) su tutte le celle.
@@ -1142,7 +1142,7 @@ Public Function Clean(Optional ByVal trimSpaces As Boolean = True, _
     Dim i As Long, j As Long
     For i = 1 To RowsCount
         For j = 1 To ColsCount
-            outData(i, j) = CleanValue(mData(i, j), trimSpaces, CollapseSpaces, softCoerce)
+            outData(i, j) = CleanValue(mData(i, j), trimSpaces, doCollapse, softCoerce)
         Next j
     Next i
 
@@ -1483,70 +1483,6 @@ Private Function ParseOneDirection(ByVal token As String, ByVal pos As Long) As 
             RaiseDf "DataFrame.Sort", edfInvalidData, "Direzione sort non valida in posizione " & CStr(pos) & ": '" & token & "'."
     End Select
 End Function
-
-'@Description "Confronta due righe seguendo la specifica di sort"
-Private Function CompareRowsBySpec(ByVal rowA As Long, ByVal rowB As Long, _
-                                   ByRef idx() As Long, ByRef dirs() As Boolean) As Long
-    Dim k As Long, col As Long, cmp As Long
-    For k = LBound(idx) To UBound(idx)
-        col = idx(k)
-        cmp = CompareValues(mData(rowA, col), mData(rowB, col))
-        If cmp <> 0 Then
-            If dirs(k - LBound(idx) + 1) Then
-                CompareRowsBySpec = cmp
-            Else
-                CompareRowsBySpec = -cmp
-            End If
-            Exit Function
-        End If
-    Next k
-    CompareRowsBySpec = 0
-End Function
-
-'@Description "Confronto base Variant: Empty/Null minori; numeri e date per valore; fallback lessicografico"
-Private Function CompareValues(ByVal a As Variant, ByVal b As Variant) As Long
-    If IsNull(a) And IsNull(b) Then CompareValues = 0: Exit Function
-    If IsNull(a) Then CompareValues = -1: Exit Function
-    If IsNull(b) Then CompareValues = 1: Exit Function
-
-    If IsEmpty(a) And IsEmpty(b) Then CompareValues = 0: Exit Function
-    If IsEmpty(a) Then CompareValues = -1: Exit Function
-    If IsEmpty(b) Then CompareValues = 1: Exit Function
-
-    If IsDate(a) And IsDate(b) Then
-        If CDbl(CDate(a)) < CDbl(CDate(b)) Then
-            CompareValues = -1
-        ElseIf CDbl(CDate(a)) > CDbl(CDate(b)) Then
-            CompareValues = 1
-        Else
-            CompareValues = 0
-        End If
-        Exit Function
-    End If
-
-    If IsNumeric(a) And IsNumeric(b) Then
-        If CDbl(a) < CDbl(b) Then
-            CompareValues = -1
-        ElseIf CDbl(a) > CDbl(b) Then
-            CompareValues = 1
-        Else
-            CompareValues = 0
-        End If
-        Exit Function
-    End If
-
-    Dim sa As String, sb As String
-    sa = CStr(a): sb = CStr(b)
-    If StrComp(sa, sb, vbTextCompare) < 0 Then
-        CompareValues = -1
-    ElseIf StrComp(sa, sb, vbTextCompare) > 0 Then
-        CompareValues = 1
-    Else
-        CompareValues = 0
-    End If
-End Function
-
-
 
 
 
