@@ -1389,11 +1389,11 @@ Public Function Metrics() As Variant
     n = mMetrics.Count
     ReDim out(1 To n, 1 To 2)
 
-    Dim keys As Variant
-    keys = mMetrics.Keys
+    Dim metricKeys As Variant
+    metricKeys = mMetrics.Keys
     For i = 1 To n
-        out(i, 1) = CStr(keys(i - 1))
-        out(i, 2) = mMetrics(keys(i - 1))
+        out(i, 1) = CStr(metricKeys(i - 1))
+        out(i, 2) = mMetrics(metricKeys(i - 1))
     Next i
 
     Metrics = out
